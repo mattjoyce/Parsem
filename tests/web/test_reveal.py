@@ -15,6 +15,11 @@ def test_reveal_advances_current_position(client: TestClient, state: ReaderState
     assert state.current_position == 1
 
 
+def test_reveal_returns_partial_fragment_not_full_page(client: TestClient) -> None:
+    response = client.post("/reveal")
+    assert response.text.lstrip().startswith("<main")
+
+
 def test_reveal_logs_event_with_chunk_id_and_clock_time(
     client: TestClient, state: ReaderState
 ) -> None:

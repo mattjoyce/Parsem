@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from parsem.domain.economy import cycle_pin, try_reveal
 from parsem.web.state import ReaderState
+from parsem.web.view import build_reader_context
 
 
 class RateBody(BaseModel):
@@ -25,24 +26,23 @@ def _state(request: Request) -> ReaderState:
     return request.app.state.reader
 
 
-def _render_reader(
-    request: Request,
-    state: ReaderState,
-    *,
-    bucket_empty: bool = False,
+def _render_full(request: Request, state: ReaderState) -> HTMLResponse:
+    templates = request.app.state.templates
+    return templates.TemplateResponse(request, "reader.html", build_reader_context(state))
+
+
+def _render_partial(
+    request: Request, state: ReaderState, *, bucket_empty: bool = False
 ) -> HTMLResponse:
     templates = request.app.state.templates
-    context = {
-        "chunk": state.chunks[state.current_position],
-        "bucket_empty": bucket_empty,
-        "seconds_until_token": state.bucket_config.regen_seconds,
-    }
-    return templates.TemplateResponse(request, "reader.html", context)
+    return templates.TemplateResponse(
+        request, "_reader_main.html", build_reader_context(state, bucket_empty=bucket_empty)
+    )
 
 
 @router.get("/reader", response_class=HTMLResponse)
 def get_reader(request: Request) -> HTMLResponse:
-    return _render_reader(request, _state(request))
+    return _render_full(request, _state(request))
 
 
 @router.post("/pin", response_class=HTMLResponse)
@@ -66,7 +66,7 @@ def post_pin(request: Request) -> HTMLResponse:
             color_id=new_color,
             created_at=now,
         )
-    return _render_reader(request, state)
+    return _render_partial(request, state)
 
 
 @router.post("/rate", response_class=HTMLResponse)
@@ -81,7 +81,7 @@ def post_rate(request: Request, body: RateBody) -> HTMLResponse:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _render_reader(request, state)
+    return _render_partial(request, state)
 
 
 @router.post("/conceal", response_class=HTMLResponse)
@@ -95,7 +95,7 @@ def post_conceal(request: Request) -> HTMLResponse:
             created_at=state.clock(),
         )
         state.current_position = new_position
-    return _render_reader(request, state)
+    return _render_partial(request, state)
 
 
 @router.post("/reveal", response_class=HTMLResponse)
@@ -120,4 +120,4 @@ def post_reveal(request: Request) -> HTMLResponse:
             chunk_id=outcome.new_position,
             created_at=now,
         )
-    return _render_reader(request, state, bucket_empty=outcome.reason == "bucket_empty")
+    return _render_partial(request, state, bucket_empty=outcome.reason == "bucket_empty")

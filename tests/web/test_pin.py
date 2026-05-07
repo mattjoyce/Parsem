@@ -45,3 +45,8 @@ def test_pin_logs_pin_clear_on_cycle_to_none(client: TestClient, state: ReaderSt
         if e.event_type == "pin_clear"
     ]
     assert len(events) == 1
+
+
+def test_pin_returns_partial_fragment_not_full_page(client: TestClient) -> None:
+    response = client.post("/pin")
+    assert response.text.lstrip().startswith("<main")

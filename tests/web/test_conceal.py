@@ -21,6 +21,11 @@ def test_conceal_at_zero_stays_at_zero(client: TestClient, state: ReaderState) -
     assert state.current_position == 0
 
 
+def test_conceal_returns_partial_fragment_not_full_page(client: TestClient) -> None:
+    response = client.post("/conceal")
+    assert response.text.lstrip().startswith("<main")
+
+
 def test_conceal_logs_event_with_chunk_id(client: TestClient, state: ReaderState) -> None:
     state.current_position = 5
     state.high_water_position = 5

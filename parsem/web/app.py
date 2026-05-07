@@ -5,12 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from parsem.web.routes.reader import router as reader_router
 from parsem.web.state import ReaderState
 
-_TEMPLATES_DIR = Path(__file__).resolve().parent / "templates"
+_WEB_DIR = Path(__file__).resolve().parent
+_TEMPLATES_DIR = _WEB_DIR / "templates"
+_STATIC_DIR = _WEB_DIR / "static"
 
 
 def create_app(state: ReaderState) -> FastAPI:
@@ -24,4 +27,5 @@ def create_app(state: ReaderState) -> FastAPI:
     app.state.reader = state
     app.state.templates = Jinja2Templates(directory=_TEMPLATES_DIR)
     app.include_router(reader_router)
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
     return app

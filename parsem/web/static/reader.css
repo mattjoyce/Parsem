@@ -1,0 +1,97 @@
+/* Parsem reader — Phase 1 styles. Spec: parsem-spec.md §15.3 (default `paper`). */
+
+:root {
+  --paper: #FAF7F0;
+  --ink: #1A1A1A;
+  --column-max: 720px;
+  --gutter: 16px;
+  --pin-1: #E4B363;
+  --pin-2: #5B8DBE;
+  --pin-3: #7A9F6B;
+  --pin-4: #C97B63;
+  --pin-5: #9477B4;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Charter, Georgia, serif;
+  font-size: 18px;
+  line-height: 1.6;
+}
+
+#reader-main { display: block; }
+
+.layout {
+  display: grid;
+  grid-template-columns: var(--gutter) minmax(0, var(--column-max)) var(--gutter);
+  gap: 0;
+  margin: 0 auto;
+  max-width: calc(var(--column-max) + var(--gutter) * 2);
+}
+
+.gutter { display: block; }
+
+.column { padding: 1em 0; }
+
+.sticky-heading {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--paper);
+  font-weight: 600;
+  padding: 0.5em 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.chunk {
+  position: relative;
+  padding: 0.5em 0;
+  white-space: pre-wrap;
+}
+.chunk--settled { opacity: 0.7; }
+.chunk--current {
+  opacity: 1;
+  border-left: 2px solid rgba(0, 0, 0, 0.15);
+  padding-left: 0.5em;
+}
+
+/* Pin dot anchored to its chunk in the left gutter. */
+.pin-dot {
+  position: absolute;
+  left: -16px;
+  top: 0.85em;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: transparent;
+}
+.pin-dot[data-pin-color="1"] { background: var(--pin-1); }
+.pin-dot[data-pin-color="2"] { background: var(--pin-2); }
+.pin-dot[data-pin-color="3"] { background: var(--pin-3); }
+.pin-dot[data-pin-color="4"] { background: var(--pin-4); }
+.pin-dot[data-pin-color="5"] { background: var(--pin-5); }
+
+.rating-prompt {
+  display: flex;
+  gap: 0.3em;
+  align-items: baseline;
+  padding: 0.5em 0;
+  opacity: 0.5;
+  font-size: 0.9em;
+}
+.rating-button {
+  background: none;
+  border: none;
+  padding: 0 0.2em;
+  font: inherit;
+  cursor: pointer;
+  color: inherit;
+}
+.rating-sep { color: rgba(0, 0, 0, 0.3); user-select: none; }
+
+.countdown { padding: 0.5em 0; opacity: 0.7; font-size: 0.9em; }
+.countdown-reminders { opacity: 0.6; font-size: 0.85em; margin-top: 0.2em; }
+
+body.review-mode .chunk--settled { opacity: 0.9; }

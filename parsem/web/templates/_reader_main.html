@@ -1,0 +1,34 @@
+<main id="reader-main">
+  <div class="layout">
+    <aside class="gutter gutter--left"></aside>
+    <section class="column">
+      {% if section_heading %}
+      <header id="section-heading" class="sticky-heading">{{ section_heading }}</header>
+      {% endif %}
+      {% for chunk in visible_chunks %}
+      <article
+        class="chunk {% if chunk.position == current_position %}chunk--current{% else %}chunk--settled{% endif %}"
+        data-chunk-position="{{ chunk.position }}"
+      >
+        <span class="pin-dot"
+          {% if chunk.position in pin_colors %}data-pin-color="{{ pin_colors[chunk.position] }}"{% endif %}
+        ></span>
+        {{ chunk.text }}
+      </article>
+      {% endfor %}
+      <nav class="rating-prompt" aria-label="Rate effort">
+        {% for r in [1, 2, 3, 4, 5] %}
+        <button type="button" class="rating-button" data-rating="{{ r }}">{{ r }}</button>
+        {% if not loop.last %}<span class="rating-sep" aria-hidden="true">·</span>{% endif %}
+        {% endfor %}
+      </nav>
+      {% if bucket_empty %}
+      <aside class="countdown" data-seconds="{{ seconds_until_token }}">
+        <div class="countdown-text">Next reveal in {{ seconds_until_token }}s</div>
+        <div class="countdown-reminders">Persist · Rate · Ask</div>
+      </aside>
+      {% endif %}
+    </section>
+    <aside class="gutter gutter--right"></aside>
+  </div>
+</main>

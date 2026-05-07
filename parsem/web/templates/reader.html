@@ -3,13 +3,10 @@
 <head>
   <meta charset="utf-8">
   <title>Parsem — Reader</title>
+  <link rel="stylesheet" href="/static/reader.css">
 </head>
 <body>
-  <main id="reader-main">
-    <article class="chunk">{{ chunk.text }}</article>
-    {% if bucket_empty %}
-    <aside class="countdown">Next reveal in {{ seconds_until_token }}s</aside>
-    {% endif %}
-  </main>
+{% include "_reader_main.html" %}
+<script src="/static/reader.js" defer></script>
 </body>
 </html>

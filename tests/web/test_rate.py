@@ -44,3 +44,8 @@ def test_rate_does_not_advance_position(client: TestClient, state: ReaderState) 
     pos_before = state.current_position
     client.post("/rate", json={"rating": 3})
     assert state.current_position == pos_before
+
+
+def test_rate_returns_partial_fragment_not_full_page(client: TestClient) -> None:
+    response = client.post("/rate", json={"rating": 3})
+    assert response.text.lstrip().startswith("<main")
