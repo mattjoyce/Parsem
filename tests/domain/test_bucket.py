@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
 from parsem.domain.bucket import BucketConfig, tokens_now
-
-T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+from tests.conftest import T0
 
 
 def burst(start: datetime, n: int, step_seconds: float = 0.1) -> list[datetime]:
