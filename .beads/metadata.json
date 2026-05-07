@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "Parsem",
+  "project_id": "43851aec-2ae9-40e3-a43e-20786bd7b815"
+}
