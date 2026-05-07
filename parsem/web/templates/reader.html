@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Parsem — Reader</title>
+</head>
+<body>
+  <main id="reader-main">
+    <article class="chunk">{{ chunk.text }}</article>
+    {% if bucket_empty %}
+    <aside class="countdown">Next reveal in {{ seconds_until_token }}s</aside>
+    {% endif %}
+  </main>
+</body>
+</html>
