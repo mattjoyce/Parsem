@@ -61,6 +61,12 @@ CREATE TABLE chunks (
 );
 CREATE INDEX idx_chunks_doc_pos ON chunks(document_id, position);
 
+-- reading_events.chunk_id stores the chunk's POSITION within the
+-- document, not chunks.id. The position-as-id semantics carry over from
+-- Phase 1's in-memory EventLog (Parsem-v5l drop-in). Cascade-on-document-
+-- delete still fires via the documents FK, so deleting a document still
+-- removes its events. The chunks-side FK from spec §21 is intentionally
+-- omitted — see Parsem-v5l for the reasoning.
 CREATE TABLE reading_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     document_id INTEGER NOT NULL,
@@ -68,8 +74,7 @@ CREATE TABLE reading_events (
     event_type TEXT NOT NULL,
     payload_json TEXT,
     created_at TEXT NOT NULL,
-    FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE,
-    FOREIGN KEY(chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+    FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_events_doc_created ON reading_events(document_id, created_at);
 
@@ -125,8 +130,13 @@ def connect(path: str | Path = ":memory:") -> sqlite3.Connection:
     journal_mode=WAL is silently downgraded to "memory" on :memory:
     databases — that's a SQLite invariant, not a bug here. File-backed
     paths get true WAL.
+
+    check_same_thread=False because FastAPI's TestClient and uvicorn run
+    request handlers in worker threads while the connection is opened on
+    the main thread. WAL + serialized writes (the sqlite3 module's
+    default) keep this safe for our single-process usage.
     """
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")

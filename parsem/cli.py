@@ -13,6 +13,7 @@ tests so no port is opened.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +23,8 @@ from fastapi import FastAPI
 from parsem.domain.bucket import BucketConfig
 from parsem.domain.chunking import ChunkingConfig, chunk
 from parsem.parse.markdown_parse import parse
+from parsem.store.db import connect, migrate
+from parsem.store.documents import insert_chunks_and_sections, insert_document
 from parsem.store.events import EventLog
 from parsem.web.app import create_app
 from parsem.web.state import ReaderState
@@ -30,14 +33,39 @@ _WELCOME = Path(__file__).resolve().parents[1] / "data" / "welcome.md"
 
 
 def build_app() -> FastAPI:
-    """Load the welcome corpus, chunk it, and return the configured app."""
+    """Load the welcome corpus, chunk it, and return the configured app.
+
+    Phase 1.5 wiring (Parsem-v5l): runs against an in-memory SQLite for
+    now. The EventLog is SQLite-backed; chunks and sections are seeded
+    so FK constraints hold. Phase 2's library/upload beads will replace
+    this with a file-backed DB and on-startup migration.
+    """
     text = _WELCOME.read_text(encoding="utf-8")
     output = chunk(parse(text), ChunkingConfig())
+    now = datetime.now(UTC)
+    conn = connect(":memory:")
+    migrate(conn)
+    document_id = insert_document(
+        conn,
+        title="welcome",
+        original_path="data/welcome.md",
+        status="ready",
+        total_chunks=len(output.chunks),
+        now=now,
+    )
+    insert_chunks_and_sections(
+        conn,
+        document_id=document_id,
+        chunks=output.chunks,
+        sections=output.sections,
+        now=now,
+    )
     state = ReaderState(
         chunks=output.chunks,
         sections=output.sections,
-        event_log=EventLog(),
+        event_log=EventLog(conn),
         bucket_config=BucketConfig(),
+        document_id=document_id,
     )
     return create_app(state)
 

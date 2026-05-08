@@ -11,6 +11,8 @@ from fastapi.testclient import TestClient
 from parsem.domain.bucket import BucketConfig
 from parsem.domain.chunking import ChunkingConfig, chunk
 from parsem.parse.markdown_parse import parse
+from parsem.store.db import connect, migrate
+from parsem.store.documents import insert_chunks_and_sections, insert_document
 from parsem.store.events import EventLog
 from parsem.web.app import create_app
 from parsem.web.state import ReaderState
@@ -21,14 +23,38 @@ WELCOME = Path(__file__).resolve().parents[2] / "data" / "welcome.md"
 
 @pytest.fixture
 def state() -> ReaderState:
-    """Fresh ReaderState anchored at T0; tests reassign `clock` to bump time."""
+    """Fresh ReaderState anchored at T0; tests reassign `clock` to bump time.
+
+    Phase 2 (Parsem-v5l): the EventLog is SQLite-backed, so the fixture
+    opens an in-memory SQLite, migrates, and seeds the welcome document
+    + its chunks + sections. The FK from reading_events.document_id to
+    documents.id is then satisfied for every event the routes emit.
+    """
     blocks = parse(WELCOME.read_text(encoding="utf-8"))
     output = chunk(blocks, ChunkingConfig())
+    conn = connect(":memory:")
+    migrate(conn)
+    document_id = insert_document(
+        conn,
+        title="welcome",
+        original_path="data/welcome.md",
+        status="ready",
+        total_chunks=len(output.chunks),
+        now=T0,
+    )
+    insert_chunks_and_sections(
+        conn,
+        document_id=document_id,
+        chunks=output.chunks,
+        sections=output.sections,
+        now=T0,
+    )
     return ReaderState(
         chunks=output.chunks,
         sections=output.sections,
-        event_log=EventLog(),
+        event_log=EventLog(conn),
         bucket_config=BucketConfig(),
+        document_id=document_id,
         clock=lambda: T0,
     )
 

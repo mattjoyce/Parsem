@@ -108,11 +108,13 @@ def test_migrate_creates_chunks_with_unique_doc_position(db: sqlite3.Connection)
         )
 
 
-def test_migrate_creates_reading_events_with_fks(db: sqlite3.Connection) -> None:
+def test_migrate_creates_reading_events_with_documents_fk(db: sqlite3.Connection) -> None:
+    """reading_events has only the documents FK — chunks FK was dropped
+    in v5l so chunk_id stores chunk POSITION, not chunks.id."""
     assert _table_exists(db, "reading_events")
     fks = list(db.execute("PRAGMA foreign_key_list(reading_events)"))
     referenced = {fk["table"] for fk in fks}
-    assert referenced == {"documents", "chunks"}
+    assert referenced == {"documents"}
 
 
 def test_migrate_creates_reading_state_table(db: sqlite3.Connection) -> None:
