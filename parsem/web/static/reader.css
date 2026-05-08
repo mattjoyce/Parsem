@@ -100,14 +100,16 @@ body {
 }
 .dot { display: inline-block; transition: opacity 0.2s ease; }
 .dot--filled { opacity: 1; color: var(--ink); }
-.dot--empty  { opacity: 0.25; color: var(--ink); }
-/* Regen dot starts visibly distinct from empty (0.4 vs 0.25) so the
- * eye can identify which slot is regenerating even at rest, then breathes
- * up to full opacity over regen_seconds via a soft cubic-bezier ease. */
+/* Every not-yet-full dot uses .dot--regen with a staggered animation-delay,
+ * so the cascade plays out client-side over `open_count * regen_seconds`
+ * without server polling. The dot at delay 0 begins regenerating
+ * immediately; subsequent dots wait their turn at multiples of the regen
+ * interval. Resting opacity 0.4 keeps the future slots visible-but-pending. */
 .dot--regen {
   opacity: 0.4;
   color: var(--ink);
   animation: token-fade var(--regen-seconds) cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation-delay: var(--delay, 0s);
 }
 @keyframes token-fade {
   from { opacity: 0.4; }

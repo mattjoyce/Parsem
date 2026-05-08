@@ -69,16 +69,21 @@ def current_section_heading(
     return None
 
 
-def _dot_classes(filled: int, capacity: int) -> list[str]:
-    """One CSS-class suffix per dot in the top-bar pictograph: 'filled' for
-    available tokens, 'regen' for the next-to-fill dot (only if any open
-    slot exists), 'empty' for the rest. Precomputed here so the template
-    just iterates a flat list."""
-    classes = ["filled"] * filled
-    if filled < capacity:
-        classes.append("regen")
-        classes.extend(["empty"] * (capacity - filled - 1))
-    return classes
+def _dot_classes(filled: int, capacity: int, regen_seconds: int) -> list[tuple[str, float]]:
+    """``(class_suffix, animation_delay_seconds)`` per dot in the top-bar
+    pictograph. Filled dots get delay 0. Every open slot is class ``regen``
+    with delay staggered at ``i * regen_seconds`` so the cascade plays out
+    client-side over ``open_count * regen_seconds`` without server polling.
+
+    Phase 1 simplification: cascade restarts on each server render
+    (no phase-aware mid-cycle resume; spec §15.4 "starting points,
+    tuned for feel").
+    """
+    result: list[tuple[str, float]] = [("filled", 0.0)] * filled
+    open_count = capacity - filled
+    for i in range(open_count):
+        result.append(("regen", float(i * regen_seconds)))
+    return result
 
 
 def _progress_percent(current: int, total: int) -> float:
@@ -111,7 +116,9 @@ def build_reader_context(
         "progress_current": progress_current,
         "progress_total": progress_total,
         "progress_percent": _progress_percent(progress_current, progress_total),
-        "dot_classes": _dot_classes(filled, state.bucket_config.capacity),
+        "dot_classes": _dot_classes(
+            filled, state.bucket_config.capacity, state.bucket_config.regen_seconds
+        ),
         "regen_seconds": state.bucket_config.regen_seconds,
         "next_chunk": next_chunk(state.chunks, state.current_position),
     }

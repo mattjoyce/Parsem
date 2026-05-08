@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from parsem.domain.chunking import Chunk, Section
 from parsem.web.view import (
+    _dot_classes,
     current_section_heading,
     document_title,
     next_chunk,
@@ -115,6 +116,38 @@ def test_next_chunk_returns_none_at_end_of_document() -> None:
 
 def test_next_chunk_returns_none_for_empty_chunks() -> None:
     assert next_chunk([], current=0) is None
+
+
+def test_dot_classes_full_bucket_emits_only_filled_with_zero_delay() -> None:
+    assert _dot_classes(filled=5, capacity=5, regen_seconds=12) == [
+        ("filled", 0.0),
+        ("filled", 0.0),
+        ("filled", 0.0),
+        ("filled", 0.0),
+        ("filled", 0.0),
+    ]
+
+
+def test_dot_classes_partial_bucket_staggers_open_slots_as_regen() -> None:
+    # 3 filled + 2 open: delays 0, 12 for the open slots so they cascade.
+    assert _dot_classes(filled=3, capacity=5, regen_seconds=12) == [
+        ("filled", 0.0),
+        ("filled", 0.0),
+        ("filled", 0.0),
+        ("regen", 0.0),
+        ("regen", 12.0),
+    ]
+
+
+def test_dot_classes_empty_bucket_staggers_all_five_as_regen() -> None:
+    # Every dot is regen; cascade plays out over 5 * 12s = 60s.
+    assert _dot_classes(filled=0, capacity=5, regen_seconds=12) == [
+        ("regen", 0.0),
+        ("regen", 12.0),
+        ("regen", 24.0),
+        ("regen", 36.0),
+        ("regen", 48.0),
+    ]
 
 
 def test_current_section_heading_returns_none_for_h1_section() -> None:

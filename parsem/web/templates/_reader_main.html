@@ -14,8 +14,8 @@
     </div>
     <div class="top-bar__tokens" aria-label="Reveal tokens"
          style="--regen-seconds: {{ regen_seconds }}s">
-      {% for cls in dot_classes %}
-      <span class="dot dot--{{ cls }}" aria-hidden="true">{% if cls == 'filled' %}●{% else %}○{% endif %}</span>
+      {% for cls, delay in dot_classes %}
+      <span class="dot dot--{{ cls }}" style="--delay: {{ delay }}s" aria-hidden="true">{% if cls == 'filled' %}●{% else %}○{% endif %}</span>
       {% endfor %}
     </div>
   </header>
