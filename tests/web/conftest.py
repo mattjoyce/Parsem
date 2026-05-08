@@ -8,12 +8,13 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from parsem.cli import RESUME_WARM_CHUNKS_DEFAULT
 from parsem.domain.bucket import BucketConfig
 from parsem.domain.chunking import ChunkingConfig, chunk
 from parsem.parse.markdown_parse import parse
 from parsem.store.db import connect, migrate
 from parsem.store.documents import insert_chunks_and_sections, insert_document
-from parsem.store.events import EventLog
+from parsem.store.projections_cache import initial_reader_positions, make_event_log
 from parsem.web.app import create_app
 from parsem.web.state import ReaderState
 from tests.conftest import T0
@@ -49,12 +50,17 @@ def state() -> ReaderState:
         sections=output.sections,
         now=T0,
     )
+    current, high_water = initial_reader_positions(
+        conn, document_id, warm_chunks=RESUME_WARM_CHUNKS_DEFAULT
+    )
     return ReaderState(
         chunks=output.chunks,
         sections=output.sections,
-        event_log=EventLog(conn),
+        event_log=make_event_log(conn),
         bucket_config=BucketConfig(),
         document_id=document_id,
+        current_position=current,
+        high_water_position=high_water,
         clock=lambda: T0,
     )
 

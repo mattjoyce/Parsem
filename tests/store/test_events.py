@@ -199,6 +199,30 @@ def test_documents_delete_cascades_to_reading_events(
     assert log.events_for_document(1) == []
 
 
+def test_on_event_hook_fires_after_insert(log: EventLog, db: sqlite3.Connection) -> None:
+    """The hook receives the freshly created ReadingEvent — used by
+    the projection cache to mirror writes on each event."""
+    seen: list[ReadingEvent] = []
+    hooked = EventLog(db, on_event=seen.append)
+    event = hooked.reveal(document_id=1, chunk_id=3, created_at=T0)
+    assert seen == [event]
+
+
+def test_on_event_hook_failure_rolls_back_event_insert(db: sqlite3.Connection) -> None:
+    """Atomic guarantee: if the projection update raises, the event
+    INSERT must roll back so the log never contains an event without
+    its corresponding projection write."""
+
+    def boom(_: ReadingEvent) -> None:
+        raise RuntimeError("projection write failed")
+
+    log = EventLog(db, on_event=boom)
+    with pytest.raises(RuntimeError):
+        log.reveal(document_id=1, chunk_id=3, created_at=T0)
+    # Event must NOT have been committed.
+    assert log.events_for_document(1) == []
+
+
 def test_events_module_does_not_import_from_web() -> None:
     import ast
     from pathlib import Path

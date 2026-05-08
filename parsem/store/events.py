@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, TypedDict
@@ -65,10 +66,21 @@ class EventLog:
     Holds a sqlite3.Connection passed in by the caller; never opens or
     closes the connection itself. Multiple EventLog instances may share
     a connection — they're stateless query wrappers.
+
+    The optional ``on_event`` callback fires after every successful
+    insert with the freshly created `ReadingEvent`. Projection caches
+    (Parsem-3jd, 1na, pv8) wire themselves in here so the on-disk
+    projection rows stay current with each write.
     """
 
-    def __init__(self, conn: sqlite3.Connection) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        on_event: Callable[[ReadingEvent], None] | None = None,
+    ) -> None:
         self._conn = conn
+        self._on_event = on_event
 
     def reveal(
         self, *, document_id: int, chunk_id: int, created_at: datetime
@@ -140,8 +152,7 @@ class EventLog:
         )
         new_id = cur.lastrowid
         assert new_id is not None
-        self._conn.commit()
-        return ReadingEvent(
+        event = ReadingEvent(
             id=new_id,
             document_id=document_id,
             event_type=event_type,
@@ -149,6 +160,18 @@ class EventLog:
             payload=payload,
             created_at=created_at,
         )
+        if self._on_event is None:
+            self._conn.commit()
+            return event
+        # Hook present: defer commit so the projection update lands in
+        # the same transaction as the event INSERT. Rollback on failure
+        # so we never leave events in the log without their projection.
+        try:
+            self._on_event(event)
+        except Exception:
+            self._conn.rollback()
+            raise
+        return event
 
 
 def _row_to_event(row: sqlite3.Row) -> ReadingEvent:
