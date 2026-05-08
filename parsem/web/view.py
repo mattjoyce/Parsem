@@ -94,11 +94,15 @@ def _progress_percent(current: int, total: int) -> float:
     return round(current * 100 / total, 1)
 
 
-def build_reader_context(
-    state: ReaderState, *, bucket_empty: bool = False, k: int = WINDOW_K
-) -> dict[str, Any]:
+def build_reader_context(state: ReaderState, *, k: int = WINDOW_K) -> dict[str, Any]:
     """Assemble the dict the reader template renders against. Single source
-    of truth for the partial's view-model."""
+    of truth for the partial's view-model.
+
+    Bucket-empty signaling moved out of the view context (Parsem-0if): the
+    top-bar token pictograph carries "when can I reveal next" and the
+    rejection motion (CSS animation triggered by JS reading the
+    ``X-Reveal-Outcome`` header) carries "why not now."
+    """
     visible = windowed_chunks(state.chunks, state.current_position, k)
     filled = tokens_now(state.paid_reveal_times, state.bucket_config, state.clock())
     progress_current = state.current_position + 1
@@ -110,8 +114,6 @@ def build_reader_context(
             state.chunks, state.sections, state.current_position
         ),
         "pin_colors": state.pin_colors,
-        "bucket_empty": bucket_empty,
-        "seconds_until_token": state.bucket_config.regen_seconds,
         "title": document_title(state.chunks),
         "progress_current": progress_current,
         "progress_total": progress_total,

@@ -7,6 +7,9 @@
   --gutter: 16px;
   --top-bar-height: 64px;
   --regen-seconds: 12s;
+  /* Distinct from --pin-1 (#E4B363) so the rejection signal can't be
+   * mistaken for a pin colour in peripheral vision (Designer review). */
+  --reject-color: #C8893E;
   --pin-1: #E4B363;
   --pin-2: #5B8DBE;
   --pin-3: #7A9F6B;
@@ -130,7 +133,12 @@ body {
 
 .gutter { display: block; }
 
-.column { padding: 1em 0; }
+/* padding-top: 70vh creates enough scroll-space above the first chunk
+ * to anchor it at the 70% line on initial load. The earlier 50vh was
+ * insufficient — Math.max(0, scrollTop) would clamp and chunk 0 landed
+ * at ~62% instead. The blank paper above is intentional framing
+ * (Parsem-0if + spec §9.5). */
+.column { padding: 70vh 0 1em; }
 
 .chunk {
   position: relative;
@@ -142,6 +150,35 @@ body {
   opacity: 1;
   border-left: 2px solid rgba(0, 0, 0, 0.15);
   padding-left: 0.5em;
+}
+
+/* Empty-bucket rejection motion (spec §12.5, Parsem-0if). JS adds
+ * .rejecting to .chunk--current AND the sibling .preview when POST
+ * /reveal returns X-Reveal-Outcome: bucket_empty. Both translate up
+ * together so the page tries to advance, holds with an amber border on
+ * current, and returns. JS sets --reject-h from the chunk's actual
+ * offsetHeight before adding the class so the translate matches one
+ * chunk-height (Designer review — em units rendered as one line, not
+ * one chunk). Class removed via `animationend` so the lifecycle ties
+ * to the real animation end, not a setTimeout wall-clock guess. */
+.chunk--current.rejecting,
+.chunk--current.rejecting ~ .preview {
+  animation: reject-bucket 650ms ease-in-out;
+}
+@keyframes reject-bucket {
+  0%   { transform: translateY(0); }
+  35%  { transform: translateY(calc(var(--reject-h, 100px) * -1)); }
+  60%  { transform: translateY(calc(var(--reject-h, 100px) * -1)); }
+  100% { transform: translateY(0); }
+}
+.chunk--current.rejecting {
+  animation-name: reject-bucket-current;
+}
+@keyframes reject-bucket-current {
+  0%   { transform: translateY(0);                                            border-left-color: rgba(0, 0, 0, 0.15); border-left-width: 2px; }
+  35%  { transform: translateY(calc(var(--reject-h, 100px) * -1));            border-left-color: var(--reject-color);  border-left-width: 3px; }
+  60%  { transform: translateY(calc(var(--reject-h, 100px) * -1));            border-left-color: var(--reject-color);  border-left-width: 3px; }
+  100% { transform: translateY(0);                                            border-left-color: rgba(0, 0, 0, 0.15); border-left-width: 2px; }
 }
 
 .pin-dot {

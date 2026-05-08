@@ -34,36 +34,53 @@ EXPECTED_BINDINGS: dict[str, str] = {
 }
 
 
-def test_reader_js_binds_every_contract_key(client: TestClient) -> None:
-    source = client.get("/static/reader.js").text
+def test_reader_js_binds_every_contract_key(reader_js_source: str) -> None:
     for key, url in EXPECTED_BINDINGS.items():
-        # Both the key literal AND the url must appear in the source.
-        assert f'"{key}"' in source, f"missing key literal {key!r} in reader.js"
-        assert url in source, f"missing url {url!r} in reader.js"
+        assert f'"{key}"' in reader_js_source, f"missing key literal {key!r}"
+        assert url in reader_js_source, f"missing url {url!r}"
 
 
-def test_reader_js_binds_review_mode_toggle(client: TestClient) -> None:
-    source = client.get("/static/reader.js").text
-    assert "ArrowUp" in source
-    assert "shiftKey" in source
-    assert "review-mode" in source
+def test_reader_js_binds_review_mode_toggle(reader_js_source: str) -> None:
+    assert "ArrowUp" in reader_js_source
+    assert "shiftKey" in reader_js_source
+    assert "review-mode" in reader_js_source
 
 
-def test_reader_js_binds_escape_to_exit_review_mode(client: TestClient) -> None:
-    source = client.get("/static/reader.js").text
-    assert "Escape" in source
+def test_reader_js_binds_escape_to_exit_review_mode(reader_js_source: str) -> None:
+    assert "Escape" in reader_js_source
 
 
-def test_reader_js_runs_countdown_interval(client: TestClient) -> None:
-    source = client.get("/static/reader.js").text
-    assert "setInterval" in source
-    assert "data-seconds" in source
-
-
-def test_reader_js_does_not_wire_deferred_keys(client: TestClient) -> None:
+def test_reader_js_does_not_wire_deferred_keys(reader_js_source: str) -> None:
     """`]`, `[`, `'`, `,`, `:`, `?` are deferred to future beads (no backend)."""
-    source = client.get("/static/reader.js").text
     for deferred_key in ("]", "[", "'"):
-        # crude but matches the contract: those literals as quoted keys
-        # should not appear as ACTIONS entries
-        assert f'"{deferred_key}":' not in source, f"unexpected handler for {deferred_key!r}"
+        assert f'"{deferred_key}":' not in reader_js_source, (
+            f"unexpected handler for {deferred_key!r}"
+        )
+
+
+def test_reader_js_defines_settle_at_current(reader_js_source: str) -> None:
+    assert "settleAtCurrent" in reader_js_source
+
+
+def test_reader_js_uses_smooth_scroll(reader_js_source: str) -> None:
+    assert 'behavior: "smooth"' in reader_js_source or "behavior:'smooth'" in reader_js_source
+
+
+def test_reader_js_reads_outcome_header(reader_js_source: str) -> None:
+    assert "X-Reveal-Outcome" in reader_js_source
+
+
+def test_reader_js_implements_canonical_check(reader_js_source: str) -> None:
+    assert "isAtCanonical" in reader_js_source
+
+
+def test_reader_js_applies_rejecting_class(reader_js_source: str) -> None:
+    assert "rejecting" in reader_js_source
+
+
+def test_reader_js_initial_settle_via_request_animation_frame(reader_js_source: str) -> None:
+    assert "requestAnimationFrame" in reader_js_source
+
+
+def test_reader_js_settles_on_window_resize(reader_js_source: str) -> None:
+    assert "resize" in reader_js_source

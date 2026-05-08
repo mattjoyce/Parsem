@@ -37,19 +37,20 @@ def test_reveal_updates_high_water_on_new_territory(client: TestClient, state: R
     assert state.high_water_position == 1
 
 
-def _exhaust_bucket(client: TestClient, state: ReaderState) -> None:
-    """Spend every token at the same instant — bucket reaches zero."""
-    for _ in range(state.bucket_config.capacity):
-        client.post("/reveal")
+from tests.web.conftest import exhaust_bucket as _exhaust_bucket  # noqa: E402
 
 
-def test_reveal_when_bucket_empty_returns_countdown_fragment(
+def test_reveal_when_bucket_empty_signals_via_outcome_header_not_text(
     client: TestClient, state: ReaderState
 ) -> None:
+    """Empty-bucket UX is now a motion effect (Parsem-0if). The body has
+    no countdown text; the JS layer reads X-Reveal-Outcome to decide
+    whether to play the rejection animation."""
     _exhaust_bucket(client, state)
     response = client.post("/reveal")
     assert response.status_code == 200
-    assert "Next reveal in" in response.text
+    assert response.headers["X-Reveal-Outcome"] == "bucket_empty"
+    assert "Next reveal in" not in response.text
 
 
 def test_reveal_when_bucket_empty_does_not_advance(client: TestClient, state: ReaderState) -> None:
@@ -69,3 +70,31 @@ def test_reveal_into_paid_territory_does_not_consume_token(
     assert response.status_code == 200
     assert state.current_position == 2
     assert len(state.paid_reveal_times) == paid_count_before  # no token spent
+
+
+def test_reveal_sets_outcome_header_advanced_paid(client: TestClient) -> None:
+    response = client.post("/reveal")
+    assert response.headers.get("X-Reveal-Outcome") == "advanced_paid"
+
+
+def test_reveal_sets_outcome_header_bucket_empty_when_drained(
+    client: TestClient, state: ReaderState
+) -> None:
+    _exhaust_bucket(client, state)
+    response = client.post("/reveal")
+    assert response.headers.get("X-Reveal-Outcome") == "bucket_empty"
+
+
+def test_reveal_sets_outcome_header_end_of_document(client: TestClient, state: ReaderState) -> None:
+    state.current_position = len(state.chunks) - 1
+    response = client.post("/reveal")
+    assert response.headers.get("X-Reveal-Outcome") == "end_of_document"
+
+
+def test_reveal_sets_outcome_header_advanced_free_for_paid_territory(
+    client: TestClient, state: ReaderState
+) -> None:
+    _exhaust_bucket(client, state)
+    state.current_position = 1
+    response = client.post("/reveal")
+    assert response.headers.get("X-Reveal-Outcome") == "advanced_free"

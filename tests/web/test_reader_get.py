@@ -81,10 +81,20 @@ def test_reader_renders_rating_prompt_with_five_buttons(client: TestClient) -> N
         assert f'data-rating="{r}"' in response.text
 
 
-def test_reader_omits_countdown_when_bucket_has_tokens(client: TestClient) -> None:
+def test_reader_never_renders_countdown_text(client: TestClient, state: ReaderState) -> None:
+    """Empty-bucket UX is now a motion effect (Parsem-0if), not a text banner."""
     response = client.get("/reader")
-    assert "countdown" not in response.text
     assert "Next reveal in" not in response.text
+    assert "Persist · Rate · Ask" not in response.text
+
+
+def test_reveal_response_never_renders_countdown(client: TestClient, state: ReaderState) -> None:
+    from tests.web.conftest import exhaust_bucket
+
+    exhaust_bucket(client, state)
+    response = client.post("/reveal")
+    assert "Next reveal in" not in response.text
+    assert "Persist · Rate · Ask" not in response.text
 
 
 def test_reader_renders_top_bar_with_document_title(client: TestClient) -> None:

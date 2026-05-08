@@ -31,13 +31,9 @@ def _render_full(request: Request, state: ReaderState) -> HTMLResponse:
     return templates.TemplateResponse(request, "reader.html", build_reader_context(state))
 
 
-def _render_partial(
-    request: Request, state: ReaderState, *, bucket_empty: bool = False
-) -> HTMLResponse:
+def _render_partial(request: Request, state: ReaderState) -> HTMLResponse:
     templates = request.app.state.templates
-    return templates.TemplateResponse(
-        request, "_reader_main.html", build_reader_context(state, bucket_empty=bucket_empty)
-    )
+    return templates.TemplateResponse(request, "_reader_main.html", build_reader_context(state))
 
 
 @router.get("/reader", response_class=HTMLResponse)
@@ -120,4 +116,8 @@ def post_reveal(request: Request) -> HTMLResponse:
             chunk_id=outcome.new_position,
             created_at=now,
         )
-    return _render_partial(request, state, bucket_empty=outcome.reason == "bucket_empty")
+    response = _render_partial(request, state)
+    # Tells the JS layer how to react: smooth-settle on success, rejection
+    # motion on bucket_empty. See spec §12.5 + Parsem-0if.
+    response.headers["X-Reveal-Outcome"] = outcome.reason
+    return response

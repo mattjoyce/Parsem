@@ -38,3 +38,17 @@ def client(state: ReaderState) -> Iterator[TestClient]:
     app = create_app(state)
     with TestClient(app) as c:
         yield c
+
+
+def exhaust_bucket(client: TestClient, state: ReaderState) -> None:
+    """Spend every token at the same instant — bucket reaches zero. Shared
+    helper between the route tests and the GET-content tests."""
+    for _ in range(state.bucket_config.capacity):
+        client.post("/reveal")
+
+
+@pytest.fixture
+def reader_js_source(client: TestClient) -> str:
+    """The served reader.js as a string. Avoids re-fetching across the
+    contract-grep suite in tests/web/test_static.py."""
+    return client.get("/static/reader.js").text
