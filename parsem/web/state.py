@@ -1,9 +1,10 @@
 """ReaderState — the in-memory holder the FastAPI app reads and mutates.
 
-Phase 1 placeholder for the Phase 2 SQLite-backed state. Holds chunked
-document, event log, configuration, current/high-water positions, and
-caches (`pin_colors`, `paid_reveal_times`) that Phase 2 will rebuild as
-projections from the event log.
+Holds chunked document, event log, configuration, current/high-water
+positions, and the per-session pin_colors hot-read cache (seeded from
+`load_pins_for_document` on open by every ReaderState construction
+site — Parsem-pv8). `last_active_pin_color` and `pre_jump_position`
+are session-scoped and not persisted.
 
 The clock is injected so route handlers can be tested with a pinned time
 without monkey-patching.
@@ -30,10 +31,10 @@ class ReaderState:
     sections: list[Section]
     event_log: EventLog
     bucket_config: BucketConfig
+    pin_colors: dict[int, int]  # caller seeds via load_pins_for_document
     document_id: int = 1
     current_position: int = 0
     high_water_position: int = 0
-    pin_colors: dict[int, int] = field(default_factory=dict)
     paid_reveal_times: list[datetime] = field(default_factory=list)
     last_active_pin_color: int | None = None
     pre_jump_position: int | None = None

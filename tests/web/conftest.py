@@ -14,7 +14,11 @@ from parsem.domain.chunking import ChunkingConfig, chunk
 from parsem.parse.markdown_parse import parse
 from parsem.store.db import connect, migrate
 from parsem.store.documents import insert_chunks_and_sections, insert_document
-from parsem.store.projections_cache import initial_reader_positions, make_event_log
+from parsem.store.projections_cache import (
+    initial_reader_positions,
+    load_pins_for_document,
+    make_event_log,
+)
 from parsem.web.app import create_app
 from parsem.web.state import ReaderState
 from tests.conftest import T0
@@ -58,6 +62,7 @@ def state() -> ReaderState:
         sections=output.sections,
         event_log=make_event_log(conn),
         bucket_config=BucketConfig(),
+        pin_colors=load_pins_for_document(conn, document_id),
         document_id=document_id,
         current_position=current,
         high_water_position=high_water,

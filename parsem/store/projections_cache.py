@@ -30,11 +30,17 @@ from parsem.domain.projections import (
     ReadingState,
     apply_event,
     build_chunk_ratings,
+    build_pins,
     build_reading_state,
     empty_reading_state,
     resume_position,
 )
-from parsem.store.events import EventLog, ReadingEvent, rate_effort_rating
+from parsem.store.events import (
+    EventLog,
+    ReadingEvent,
+    pin_set_color,
+    rate_effort_rating,
+)
 
 # ─── reading_state projection (Parsem-3jd) ────────────────────────────
 
@@ -194,6 +200,106 @@ def _write_chunk_rating(
     )
 
 
+# ─── pins projection (Parsem-pv8) ─────────────────────────────────────
+
+
+def apply_to_pins(conn: sqlite3.Connection, event: ReadingEvent) -> None:
+    """Persist one pin_set or pin_clear event into the `pins` table.
+    Phase 2 chunk-level: enforces "at most one chunk-level pin per
+    chunk" via DELETE-then-INSERT (table has no schema-level uniqueness
+    on the chunk-level slot). Resolves position → chunks.id; silently
+    skips on resolution miss (drift guard). Does NOT commit.
+
+    Validates payload BEFORE the DELETE so a malformed `pin_set`
+    cannot silently empty an existing slot — keeps the cache aligned
+    with `apply_pin_event`'s no-op-on-missing-color contract."""
+    if event.event_type == "pin_clear":
+        color: int | None = None
+    elif event.event_type == "pin_set":
+        color = pin_set_color(event)
+        if color is None:
+            return
+    else:
+        return
+    if event.chunk_id is None:
+        return
+    chunk_db_id = _resolve_chunk_id(conn, event.document_id, event.chunk_id)
+    if chunk_db_id is None:
+        return
+    _delete_chunk_level_pin(conn, event.document_id, chunk_db_id)
+    if color is not None:
+        _insert_chunk_level_pin(
+            conn, event.document_id, chunk_db_id, color, event.created_at
+        )
+
+
+def load_pins_for_document(
+    conn: sqlite3.Connection, document_id: int
+) -> dict[int, int]:
+    """Return the persisted chunk-level pins as a position→color_id
+    dict (UI lives in position space; pins.chunk_id_start FKs to
+    chunks.id). Phase 2 only loads chunk-level rows; word-level
+    selection is post-MVP."""
+    rows = conn.execute(
+        "SELECT c.position, p.color_id"
+        " FROM pins p JOIN chunks c ON c.id = p.chunk_id_start"
+        " WHERE p.document_id=? AND p.word_start=0 AND p.word_end=-1",
+        (document_id,),
+    ).fetchall()
+    return {row["position"]: row["color_id"] for row in rows}
+
+
+def rebuild_pins(
+    conn: sqlite3.Connection, document_id: int, log: EventLog
+) -> dict[int, int]:
+    """§18.5 recovery: rewrite chunk-level pin rows for one document
+    from the full event log. Wipes existing chunk-level rows first so
+    a rebuild can never leave stale pins behind."""
+    events = log.events_for_document(document_id)
+    pins = build_pins(document_id, events)
+    conn.execute(
+        "DELETE FROM pins"
+        " WHERE document_id=? AND word_start=0 AND word_end=-1",
+        (document_id,),
+    )
+    for position, color in pins.items():
+        chunk_db_id = _resolve_chunk_id(conn, document_id, position)
+        if chunk_db_id is None:
+            continue
+        _insert_chunk_level_pin(
+            conn, document_id, chunk_db_id, color, datetime.now(UTC)
+        )
+    conn.commit()
+    return pins
+
+
+def _delete_chunk_level_pin(
+    conn: sqlite3.Connection, document_id: int, chunk_db_id: int
+) -> None:
+    conn.execute(
+        "DELETE FROM pins"
+        " WHERE document_id=? AND chunk_id_start=? AND chunk_id_end=?"
+        "   AND word_start=0 AND word_end=-1",
+        (document_id, chunk_db_id, chunk_db_id),
+    )
+
+
+def _insert_chunk_level_pin(
+    conn: sqlite3.Connection,
+    document_id: int,
+    chunk_db_id: int,
+    color: int,
+    created_at: datetime,
+) -> None:
+    conn.execute(
+        "INSERT INTO pins"
+        " (document_id, chunk_id_start, word_start,"
+        "  chunk_id_end, word_end, color_id, created_at)"
+        " VALUES (?, ?, 0, ?, -1, ?, ?)",
+        (document_id, chunk_db_id, chunk_db_id, color, created_at.isoformat()),
+    )
+
+
 # ─── EventLog wiring ──────────────────────────────────────────────────
 
 
@@ -206,6 +312,7 @@ def make_event_log(conn: sqlite3.Connection) -> EventLog:
     def _on_event(event: ReadingEvent) -> None:
         apply_to_reading_state(conn, event)
         apply_to_chunk_ratings(conn, event)
+        apply_to_pins(conn, event)
         conn.commit()
 
     return EventLog(conn, on_event=_on_event)

@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from functools import reduce
 
-from parsem.store.events import ReadingEvent, rate_effort_rating
+from parsem.store.events import ReadingEvent, pin_set_color, rate_effort_rating
 
 
 @dataclass(frozen=True)
@@ -74,8 +74,11 @@ def build_reading_state(
     document_id: int, events: list[ReadingEvent]
 ) -> ReadingState:
     """`document_id` is required because an empty event list carries
-    no document identity."""
-    return reduce(apply_event, events, empty_reading_state(document_id))
+    no document identity. Events from other documents are filtered
+    out so the function is safe to call with a mixed-document event
+    stream — symmetry with `build_chunk_ratings` and `build_pins`."""
+    scoped = [e for e in events if e.document_id == document_id]
+    return reduce(apply_event, scoped, empty_reading_state(document_id))
 
 
 def resume_position(state: ReadingState, warm_chunks: int) -> int:
@@ -110,3 +113,32 @@ def build_chunk_ratings(
     for one document. Events from other documents are filtered out."""
     scoped = [e for e in events if e.document_id == document_id]
     return reduce(apply_rating_event, scoped, {})
+
+
+# ─── pins projection (Parsem-pv8) ─────────────────────────────────────
+
+
+def apply_pin_event(
+    pins: dict[int, int], event: ReadingEvent
+) -> dict[int, int]:
+    """Fold one pin event into a position→color_id dict. `pin_set`
+    sets/overwrites; `pin_clear` removes; everything else is a no-op."""
+    if event.chunk_id is None:
+        return pins
+    if event.event_type == "pin_clear":
+        next_pins = dict(pins)
+        next_pins.pop(event.chunk_id, None)
+        return next_pins
+    color = pin_set_color(event)
+    if color is None:
+        return pins
+    return {**pins, event.chunk_id: color}
+
+
+def build_pins(
+    document_id: int, events: list[ReadingEvent]
+) -> dict[int, int]:
+    """Project pin_set/pin_clear events into a position→color_id dict
+    for one document. Events from other documents are filtered out."""
+    scoped = [e for e in events if e.document_id == document_id]
+    return reduce(apply_pin_event, scoped, {})

@@ -184,6 +184,14 @@ def rate_effort_rating(event: ReadingEvent) -> int | None:
     return cast(RateEffortPayload, event.payload)["rating"]
 
 
+def pin_set_color(event: ReadingEvent) -> int | None:
+    """Same pattern as `rate_effort_rating`: returns the color_id from
+    a `pin_set` event's payload, or None for any other event type."""
+    if event.event_type != "pin_set":
+        return None
+    return cast(PinSetPayload, event.payload)["color_id"]
+
+
 def _row_to_event(row: sqlite3.Row) -> ReadingEvent:
     payload_raw = row["payload_json"]
     payload: EventPayload = json.loads(payload_raw) if payload_raw is not None else None

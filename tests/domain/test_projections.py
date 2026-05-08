@@ -9,8 +9,10 @@ from pathlib import Path
 from parsem.domain.projections import (
     ReadingState,
     apply_event,
+    apply_pin_event,
     apply_rating_event,
     build_chunk_ratings,
+    build_pins,
     build_reading_state,
     empty_reading_state,
     resume_position,
@@ -203,6 +205,65 @@ def test_apply_rating_event_is_pure() -> None:
     assert next_state == {3: 5}
 
 
+# ─── pins projection (Parsem-pv8) ─────────────────────────────────────
+
+
+def test_pin_set_records_position_to_color() -> None:
+    events = [
+        _ev(id=1, event_type="pin_set", chunk_id=3, payload={"color_id": 2}),
+    ]
+    assert build_pins(document_id=1, events=events) == {3: 2}
+
+
+def test_pin_clear_removes_existing_pin() -> None:
+    events = [
+        _ev(id=1, event_type="pin_set", chunk_id=3, payload={"color_id": 2}),
+        _ev(id=2, event_type="pin_clear", chunk_id=3),
+    ]
+    assert build_pins(document_id=1, events=events) == {}
+
+
+def test_pin_set_then_pin_set_overwrites_color() -> None:
+    events = [
+        _ev(id=1, event_type="pin_set", chunk_id=3, payload={"color_id": 2}),
+        _ev(id=2, event_type="pin_set", chunk_id=3, payload={"color_id": 5}),
+    ]
+    assert build_pins(document_id=1, events=events) == {3: 5}
+
+
+def test_pin_clear_on_unpinned_chunk_is_no_op() -> None:
+    events = [_ev(id=1, event_type="pin_clear", chunk_id=3)]
+    assert build_pins(document_id=1, events=events) == {}
+
+
+def test_apply_pin_event_ignores_non_pin_events() -> None:
+    events = [
+        _ev(id=1, event_type="reveal", chunk_id=3),
+        _ev(id=2, event_type="conceal", chunk_id=2),
+        _ev(id=3, event_type="rate_effort", chunk_id=3, payload={"rating": 4}),
+        _ev(id=4, event_type="open_document"),
+        _ev(id=5, event_type="close_document"),
+    ]
+    assert build_pins(document_id=1, events=events) == {}
+
+
+def test_build_pins_filters_other_documents() -> None:
+    events = [
+        _ev(id=1, document_id=1, event_type="pin_set", chunk_id=3, payload={"color_id": 1}),
+        _ev(id=2, document_id=2, event_type="pin_set", chunk_id=3, payload={"color_id": 5}),
+    ]
+    assert build_pins(document_id=1, events=events) == {3: 1}
+
+
+def test_apply_pin_event_is_pure() -> None:
+    seed: dict[int, int] = {1: 2}
+    next_state = apply_pin_event(
+        seed, _ev(id=1, event_type="pin_set", chunk_id=3, payload={"color_id": 4})
+    )
+    assert seed == {1: 2}
+    assert next_state == {1: 2, 3: 4}
+
+
 def test_projections_module_does_not_import_from_web_or_store_internals() -> None:
     """Spec §18.1: domain doesn't depend on web. Only the event value
     types (`ReadingEvent` and its payload TypedDicts) are imported from
@@ -213,6 +274,7 @@ def test_projections_module_does_not_import_from_web_or_store_internals() -> Non
         "RateEffortPayload",
         "PinSetPayload",
         "rate_effort_rating",
+        "pin_set_color",
     }
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:

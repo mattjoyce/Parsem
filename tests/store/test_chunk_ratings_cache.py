@@ -7,9 +7,6 @@ from datetime import timedelta
 
 import pytest
 
-from parsem.domain.chunking import Chunk, Section
-from parsem.store.db import connect, migrate
-from parsem.store.documents import insert_chunks_and_sections, insert_document
 from parsem.store.events import EventLog, ReadingEvent
 from parsem.store.projections_cache import (
     apply_to_chunk_ratings,
@@ -21,49 +18,9 @@ from parsem.store.projections_cache import (
 from tests.conftest import T0
 
 
-def _chunk(position: int) -> Chunk:
-    return Chunk(
-        position=position,
-        source_offset_start=position * 10,
-        source_offset_end=position * 10 + 9,
-        text=f"chunk {position}",
-        lead_token_type="paragraph",
-        lead_heading_level=None,
-        estimated_read_seconds=1.0,
-    )
-
-
 @pytest.fixture
-def db() -> sqlite3.Connection:
-    """SQLite seeded with two documents and 5 chunks each. Position
-    resolution is exercised by every chunk_ratings test, so chunks
-    must exist."""
-    conn = connect(":memory:")
-    migrate(conn)
-    for title in ("d1", "d2"):
-        document_id = insert_document(
-            conn,
-            title=title,
-            original_path=f"{title}.md",
-            status="ready",
-            total_chunks=5,
-            now=T0,
-        )
-        insert_chunks_and_sections(
-            conn,
-            document_id=document_id,
-            chunks=[_chunk(i) for i in range(5)],
-            sections=[
-                Section(
-                    heading_chunk_position=None,
-                    heading_level=None,
-                    start_chunk_position=0,
-                    end_chunk_position=4,
-                )
-            ],
-            now=T0,
-        )
-    return conn
+def db(db_with_chunks: sqlite3.Connection) -> sqlite3.Connection:
+    return db_with_chunks
 
 
 @pytest.fixture
