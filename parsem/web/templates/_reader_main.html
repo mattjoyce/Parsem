@@ -46,6 +46,11 @@
           <div class="countdown-reminders">Persist · Rate · Ask</div>
         </aside>
         {% endif %}
+        {% if next_chunk %}
+        <div class="preview" data-chunk-position="{{ next_chunk.position }}" aria-hidden="true">
+          {{ next_chunk.text }}
+        </div>
+        {% endif %}
       </section>
       <aside class="gutter gutter--right"></aside>
     </div>

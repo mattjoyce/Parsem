@@ -6,6 +6,7 @@ from parsem.domain.chunking import Chunk, Section
 from parsem.web.view import (
     current_section_heading,
     document_title,
+    next_chunk,
     windowed_chunks,
 )
 
@@ -99,6 +100,21 @@ def test_document_title_returns_untitled_when_no_h1_exists() -> None:
     # Doc with only H2s and paragraphs.
     chunks = [_chunk(0), _chunk(1, heading=True, heading_level=2, text="## Section")]
     assert document_title(chunks) == "Untitled"
+
+
+def test_next_chunk_returns_chunk_at_current_plus_one() -> None:
+    chunks = [_chunk(0), _chunk(1), _chunk(2)]
+    assert next_chunk(chunks, current=0) is chunks[1]
+    assert next_chunk(chunks, current=1) is chunks[2]
+
+
+def test_next_chunk_returns_none_at_end_of_document() -> None:
+    chunks = [_chunk(0), _chunk(1)]
+    assert next_chunk(chunks, current=1) is None
+
+
+def test_next_chunk_returns_none_for_empty_chunks() -> None:
+    assert next_chunk([], current=0) is None
 
 
 def test_current_section_heading_returns_none_for_h1_section() -> None:

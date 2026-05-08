@@ -116,6 +116,40 @@ def test_reader_partially_drained_bucket_renders_regen_dot(
     assert response.text.count("dot--regen") == 1
 
 
+def test_reader_renders_blurred_preview_of_next_chunk(
+    client: TestClient, state: ReaderState
+) -> None:
+    response = client.get("/reader")
+    assert 'class="preview"' in response.text
+    next_text = state.chunks[1].text.strip().split("\n")[0]
+    assert next_text in response.text
+
+
+def test_preview_block_has_data_chunk_position_for_next(
+    client: TestClient, state: ReaderState
+) -> None:
+    state.current_position = 3
+    response = client.get("/reader")
+    assert 'class="preview"' in response.text
+    assert 'data-chunk-position="4"' in response.text
+
+
+def test_reader_omits_preview_at_end_of_document(client: TestClient, state: ReaderState) -> None:
+    state.current_position = len(state.chunks) - 1
+    response = client.get("/reader")
+    assert 'class="preview"' not in response.text
+
+
+def test_preview_appears_after_current_chunk_and_rating_prompt(
+    client: TestClient,
+) -> None:
+    response = client.get("/reader")
+    rating_idx = response.text.find('class="rating-prompt"')
+    preview_idx = response.text.find('class="preview"')
+    assert rating_idx >= 0 and preview_idx >= 0
+    assert preview_idx > rating_idx
+
+
 def test_reader_full_page_loads_static_js_and_css(client: TestClient) -> None:
     response = client.get("/reader")
     assert "/static/reader.js" in response.text

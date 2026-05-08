@@ -35,6 +35,14 @@ def document_title(chunks: list[Chunk]) -> str:
     return "Untitled"
 
 
+def next_chunk(chunks: list[Chunk], current: int) -> Chunk | None:
+    """Return the chunk at ``current + 1``, or None at end-of-document.
+    Used by the preview gutter (spec §9.5)."""
+    if current + 1 < len(chunks):
+        return chunks[current + 1]
+    return None
+
+
 def windowed_chunks(chunks: list[Chunk], current: int, k: int) -> list[Chunk]:
     """Return the last ``k`` chunks ending at ``current``, clamped at zero.
 
@@ -105,4 +113,5 @@ def build_reader_context(
         "progress_percent": _progress_percent(progress_current, progress_total),
         "dot_classes": _dot_classes(filled, state.bucket_config.capacity),
         "regen_seconds": state.bucket_config.regen_seconds,
+        "next_chunk": next_chunk(state.chunks, state.current_position),
     }
