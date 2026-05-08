@@ -61,19 +61,77 @@
     sc.scrollTo({ top, behavior });
   }
 
+  // Apply the server's partial fragment surgically. Three goals:
+  //
+  // 1. Preserve the .reader-scroll element so its scrollTop survives the
+  //    update (a destructive outerHTML swap would reset it to 0).
+  //
+  // 2. Capture each visible chunk's offsetTop pre-swap. After the
+  //    innerHTML replace, the visible_chunks list has shifted — chunks
+  //    above the anchor have changed (advance drops the oldest, adds
+  //    one at the bottom; conceal does the reverse). The chunks in the
+  //    overlap have NEW offsetTops, so a preserved scrollTop alone
+  //    leaves the user's eye looking at the wrong chunk.
+  //
+  // 3. After the swap, find any chunk that's in both pre- and post-DOM
+  //    (by data-chunk-position), and shift scrollTop so that chunk's
+  //    viewport position is invariant. Because all chunks in the overlap
+  //    move by the same delta, anchoring on one preserves the layout for
+  //    all of them. settleAtCurrent then animates only the intended
+  //    delta to the new 70% anchor.
+  function applyResponseFragment(html) {
+    const sc = scrollContainer();
+    const preSwapOffsets = new Map();
+    if (sc) {
+      document.querySelectorAll(".chunk").forEach((ch) => {
+        preSwapOffsets.set(ch.dataset.chunkPosition, ch.offsetTop);
+      });
+    }
+    const oldScrollTop = sc ? sc.scrollTop : 0;
+
+    const tempContainer = document.createElement("div");
+    tempContainer.innerHTML = html;
+    const newMain = tempContainer.firstElementChild;
+    if (!newMain) return;
+
+    const oldTopBar = document.querySelector(".top-bar");
+    const newTopBar = newMain.querySelector(".top-bar");
+    if (oldTopBar && newTopBar) oldTopBar.replaceWith(newTopBar);
+
+    const oldScroll = document.querySelector(".reader-scroll");
+    const newScroll = newMain.querySelector(".reader-scroll");
+    if (oldScroll && newScroll) oldScroll.innerHTML = newScroll.innerHTML;
+
+    if (sc && preSwapOffsets.size > 0) {
+      for (const ch of document.querySelectorAll(".chunk")) {
+        const pos = ch.dataset.chunkPosition;
+        if (preSwapOffsets.has(pos)) {
+          sc.scrollTop = oldScrollTop + (ch.offsetTop - preSwapOffsets.get(pos));
+          break;
+        }
+      }
+    }
+  }
+
   function playRejection() {
     const cc = currentChunk();
-    if (!cc) return;
-    // Set --reject-h to the chunk's actual height so the keyframe's
-    // translateY equals one chunk-height (per spec §12.5 "translate upward
-    // by ~one chunk-height"). Em units would be one line, not one chunk.
-    cc.style.setProperty("--reject-h", cc.offsetHeight + "px");
-    cc.classList.add("rejecting");
-    // animationend ties cleanup to the actual end-of-animation rather than
-    // a setTimeout wall-clock guess; { once: true } self-cleans.
-    cc.addEventListener(
+    const col = document.querySelector(".column");
+    if (!cc || !col) return;
+    // --reject-h on .column inherits to children; keyframe uses it so the
+    // translate equals one chunk-height (spec §12.5). Em units would be
+    // one line, not one chunk.
+    col.style.setProperty("--reject-h", cc.offsetHeight + "px");
+    // Translate the whole column so settled chunks, current, rating, and
+    // preview all move in sync (Parsem-1br). The current chunk also pulses
+    // amber via a separate class.
+    col.classList.add("rejecting");
+    cc.classList.add("rejecting-current");
+    col.addEventListener(
       "animationend",
-      () => cc.classList.remove("rejecting"),
+      () => {
+        col.classList.remove("rejecting");
+        cc.classList.remove("rejecting-current");
+      },
       { once: true },
     );
   }
@@ -104,8 +162,7 @@
     }
 
     const html = await response.text();
-    const main = document.getElementById("reader-main");
-    if (main) main.outerHTML = html;
+    applyResponseFragment(html);
     settleAtCurrent({ behavior: "smooth" });
   }
 

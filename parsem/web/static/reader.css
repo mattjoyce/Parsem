@@ -119,8 +119,14 @@ body {
   to   { opacity: 1; }
 }
 
-/* Reading area — scroll context (row 2 of the grid). */
+/* Reading area — scroll context (row 2 of the grid). position: relative
+ * makes .reader-scroll the offsetParent for chunks. Without it, chunk
+ * .offsetTop bubbles all the way up to <body>, which breaks the JS
+ * canonical-position check (isAtCanonical) and the smooth-scroll target
+ * math (settleAtCurrent). Both expect chunk.offsetTop to be measured
+ * inside the scroll container. */
 .reader-scroll {
+  position: relative;
   overflow-y: auto;
   overflow-x: hidden;
 }
@@ -140,45 +146,52 @@ body {
  * (Parsem-0if + spec §9.5). */
 .column { padding: 70vh 0 1em; }
 
+/* Chunks render as continuous prose: settled chunks have no padding or
+ * margin so multi-chunk paragraphs from the source markdown read as one
+ * paragraph visually. Only the current chunk gets a visual block —
+ * left-border accent + small breathing-room padding — to mark "this is
+ * what I'm reading now." Three regions: text-flow (settled, faded) →
+ * bordered current → blurred preview (Parsem-3dv). */
 .chunk {
   position: relative;
-  padding: 0.5em 0;
   white-space: pre-wrap;
+  margin: 0;
+  padding: 0;
 }
 .chunk--settled { opacity: 0.7; }
 .chunk--current {
   opacity: 1;
   border-left: 2px solid rgba(0, 0, 0, 0.15);
-  padding-left: 0.5em;
+  padding: 0.25em 0.5em;
+  margin: 0.4em 0;
 }
 
-/* Empty-bucket rejection motion (spec §12.5, Parsem-0if). JS adds
- * .rejecting to .chunk--current AND the sibling .preview when POST
- * /reveal returns X-Reveal-Outcome: bucket_empty. Both translate up
- * together so the page tries to advance, holds with an amber border on
- * current, and returns. JS sets --reject-h from the chunk's actual
- * offsetHeight before adding the class so the translate matches one
- * chunk-height (Designer review — em units rendered as one line, not
- * one chunk). Class removed via `animationend` so the lifecycle ties
- * to the real animation end, not a setTimeout wall-clock guess. */
-.chunk--current.rejecting,
-.chunk--current.rejecting ~ .preview {
-  animation: reject-bucket 650ms ease-in-out;
+/* Empty-bucket rejection motion (spec §12.5, Parsem-0if + Parsem-1br).
+ *
+ * The whole reading column translates as one so settled chunks, current
+ * chunk, rating prompt, and preview all move in sync — preserving the
+ * "single page" illusion. The amber border pulse rides on top of the
+ * translate, applied only to the current chunk.
+ *
+ * JS sets --reject-h on .column from the current chunk's offsetHeight;
+ * children inherit, so the chunk's pulse keyframe can use the same value
+ * if needed. Class lifecycle is tied to animationend on .column.
+ */
+.column.rejecting {
+  animation: reject-translate 650ms ease-in-out;
 }
-@keyframes reject-bucket {
-  0%   { transform: translateY(0); }
-  35%  { transform: translateY(calc(var(--reject-h, 100px) * -1)); }
-  60%  { transform: translateY(calc(var(--reject-h, 100px) * -1)); }
-  100% { transform: translateY(0); }
+.chunk--current.rejecting-current {
+  animation: reject-pulse 650ms ease-in-out;
 }
-.chunk--current.rejecting {
-  animation-name: reject-bucket-current;
+@keyframes reject-translate {
+  0%       { transform: translateY(0); }
+  35%, 60% { transform: translateY(calc(var(--reject-h, 100px) * -1)); }
+  100%     { transform: translateY(0); }
 }
-@keyframes reject-bucket-current {
-  0%   { transform: translateY(0);                                            border-left-color: rgba(0, 0, 0, 0.15); border-left-width: 2px; }
-  35%  { transform: translateY(calc(var(--reject-h, 100px) * -1));            border-left-color: var(--reject-color);  border-left-width: 3px; }
-  60%  { transform: translateY(calc(var(--reject-h, 100px) * -1));            border-left-color: var(--reject-color);  border-left-width: 3px; }
-  100% { transform: translateY(0);                                            border-left-color: rgba(0, 0, 0, 0.15); border-left-width: 2px; }
+@keyframes reject-pulse {
+  0%       { border-left-color: rgba(0, 0, 0, 0.15); border-left-width: 2px; }
+  35%, 60% { border-left-color: var(--reject-color); border-left-width: 3px; }
+  100%     { border-left-color: rgba(0, 0, 0, 0.15); border-left-width: 2px; }
 }
 
 .pin-dot {
