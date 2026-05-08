@@ -1,10 +1,12 @@
-/* Parsem reader — Phase 1 styles. Spec: parsem-spec.md §15.3 (default `paper`). */
+/* Parsem reader — Phase 1 styles. Spec: parsem-spec.md §15.3 (paper default), §9.5 (top bar + reading viewport). */
 
 :root {
   --paper: #FAF7F0;
   --ink: #1A1A1A;
   --column-max: 720px;
   --gutter: 16px;
+  --top-bar-height: 64px;
+  --regen-seconds: 12s;
   --pin-1: #E4B363;
   --pin-2: #5B8DBE;
   --pin-3: #7A9F6B;
@@ -12,8 +14,12 @@
   --pin-5: #9477B4;
 }
 
-body {
+html, body {
   margin: 0;
+  height: 100%;
+}
+
+body {
   background: var(--paper);
   color: var(--ink);
   font-family: Charter, Georgia, serif;
@@ -21,29 +27,108 @@ body {
   line-height: 1.6;
 }
 
-#reader-main { display: block; }
+/* #reader-main is the swap target AND the layout root: top bar + scroll. */
+#reader-main {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  height: 100vh;
+  max-width: calc(var(--column-max) + var(--gutter) * 2);
+  margin: 0 auto;
+}
+
+/* Top bar — persistent, outside the scroll context (row 1 of the grid).
+ * Fixed min-height prevents layout jitter when the section line
+ * appears/disappears at heading transitions. */
+.top-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 1.25em;
+  padding: 0.6em 1em;
+  min-height: var(--top-bar-height);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  background: var(--paper);
+}
+
+.top-bar__identity { min-width: 0; }
+.doc-title {
+  margin: 0;
+  font-size: 1em;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Section line always renders; reserves its row of space whether or not
+ * the current section has a heading. Empty content collapses visually
+ * but keeps the top bar's height stable. */
+.section-line {
+  min-height: 1.1em;
+  font-size: 0.85em;
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Progress: fraction text and bar inline (single row), gentler against
+ * the title's two-line stack. */
+.top-bar__progress {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5em;
+  font-size: 0.85em;
+  opacity: 0.65;
+}
+.progress-bar {
+  width: 64px;
+  height: 2px;
+  background: rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+.progress-bar__fill {
+  height: 100%;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.top-bar__tokens {
+  display: flex;
+  gap: 0.3em;
+  font-size: 0.9em;
+  line-height: 1;
+}
+.dot { display: inline-block; transition: opacity 0.2s ease; }
+.dot--filled { opacity: 1; color: var(--ink); }
+.dot--empty  { opacity: 0.25; color: var(--ink); }
+/* Regen dot starts visibly distinct from empty (0.4 vs 0.25) so the
+ * eye can identify which slot is regenerating even at rest, then breathes
+ * up to full opacity over regen_seconds via a soft cubic-bezier ease. */
+.dot--regen {
+  opacity: 0.4;
+  color: var(--ink);
+  animation: token-fade var(--regen-seconds) cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+@keyframes token-fade {
+  from { opacity: 0.4; }
+  to   { opacity: 1; }
+}
+
+/* Reading area — scroll context (row 2 of the grid). */
+.reader-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+}
 
 .layout {
   display: grid;
-  grid-template-columns: var(--gutter) minmax(0, var(--column-max)) var(--gutter);
+  grid-template-columns: var(--gutter) minmax(0, 1fr) var(--gutter);
   gap: 0;
-  margin: 0 auto;
-  max-width: calc(var(--column-max) + var(--gutter) * 2);
 }
 
 .gutter { display: block; }
 
 .column { padding: 1em 0; }
-
-.sticky-heading {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  background: var(--paper);
-  font-weight: 600;
-  padding: 0.5em 0;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-}
 
 .chunk {
   position: relative;
@@ -57,7 +142,6 @@ body {
   padding-left: 0.5em;
 }
 
-/* Pin dot anchored to its chunk in the left gutter. */
 .pin-dot {
   position: absolute;
   left: -16px;

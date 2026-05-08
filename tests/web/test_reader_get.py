@@ -87,6 +87,35 @@ def test_reader_omits_countdown_when_bucket_has_tokens(client: TestClient) -> No
     assert "Next reveal in" not in response.text
 
 
+def test_reader_renders_top_bar_with_document_title(client: TestClient) -> None:
+    response = client.get("/reader")
+    assert 'class="top-bar"' in response.text
+    assert "Welcome to Parsem" in response.text
+
+
+def test_reader_top_bar_shows_progress_fraction(client: TestClient, state: ReaderState) -> None:
+    state.current_position = 4
+    response = client.get("/reader")
+    total = len(state.chunks)
+    assert f"5 / {total}" in response.text or f"5/{total}" in response.text
+
+
+def test_reader_full_bucket_renders_five_filled_dots(client: TestClient) -> None:
+    response = client.get("/reader")
+    assert response.text.count("dot--filled") == 5
+    assert "dot--regen" not in response.text
+
+
+def test_reader_partially_drained_bucket_renders_regen_dot(
+    client: TestClient, state: ReaderState
+) -> None:
+    # Reveal once → 1 token spent, 4 filled, 1 regen, 0 empty among 5 total dots
+    client.post("/reveal")
+    response = client.get("/reader")
+    assert response.text.count("dot--filled") == 4
+    assert response.text.count("dot--regen") == 1
+
+
 def test_reader_full_page_loads_static_js_and_css(client: TestClient) -> None:
     response = client.get("/reader")
     assert "/static/reader.js" in response.text

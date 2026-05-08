@@ -55,14 +55,16 @@ def test_try_reveal_into_paid_territory_is_free() -> None:
 
 
 def test_try_reveal_does_not_advance_when_bucket_empty_and_new_territory() -> None:
-    # 3 paid reveals at default capacity=3 → bucket exhausted at the same instant.
+    # Pinned to capacity=3 so 3 reveals exhaust the bucket. Production
+    # default is 5 (spec §12.1); this test verifies the empty-bucket branch
+    # of try_reveal regardless of capacity.
     times = [T0, T0 + timedelta(seconds=1), T0 + timedelta(seconds=2)]
     outcome = try_reveal(
         current_position=2,
         high_water_position=2,
         chunks_total=10,
         paid_reveal_times=times,
-        bucket_config=BucketConfig(),
+        bucket_config=BucketConfig(capacity=3),
         now=T0 + timedelta(seconds=2),
     )
     assert outcome.advanced is False

@@ -22,6 +22,11 @@ def wide_config() -> BucketConfig:
     return BucketConfig(capacity=10, regen_seconds=12, fresh_session_idle_multiplier=5)
 
 
+def test_default_capacity_is_five() -> None:
+    # Spec §12.1: bucket.capacity is fixed at 5.
+    assert BucketConfig().capacity == 5
+
+
 def test_empty_reveal_list_with_start_full_returns_capacity() -> None:
     config = BucketConfig()
     assert tokens_now([], config, T0) == config.capacity
@@ -50,13 +55,15 @@ def test_one_reveal_then_just_under_regen_interval_returns_capacity_minus_one() 
 
 
 def test_three_rapid_reveals_at_capacity_three_drains_to_zero() -> None:
-    config = BucketConfig()
+    # Pinned to capacity=3 to preserve "exhaust at small capacity" semantics
+    # independent of the production default (spec §12.1: fixed at 5).
+    config = BucketConfig(capacity=3)
     reveals = burst(T0, 3, step_seconds=1)
     assert tokens_now(reveals, config, reveals[-1]) == 0
 
 
 def test_three_rapid_reveals_then_one_regen_interval_returns_one() -> None:
-    config = BucketConfig()
+    config = BucketConfig(capacity=3)
     reveals = burst(T0, 3, step_seconds=1)
     now = reveals[-1] + timedelta(seconds=config.regen_seconds)
     assert tokens_now(reveals, config, now) == 1

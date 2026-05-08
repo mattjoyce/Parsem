@@ -1,34 +1,53 @@
 <main id="reader-main">
-  <div class="layout">
-    <aside class="gutter gutter--left"></aside>
-    <section class="column">
-      {% if section_heading %}
-      <header id="section-heading" class="sticky-heading">{{ section_heading }}</header>
-      {% endif %}
-      {% for chunk in visible_chunks %}
-      <article
-        class="chunk {% if chunk.position == current_position %}chunk--current{% else %}chunk--settled{% endif %}"
-        data-chunk-position="{{ chunk.position }}"
-      >
-        <span class="pin-dot"
-          {% if chunk.position in pin_colors %}data-pin-color="{{ pin_colors[chunk.position] }}"{% endif %}
-        ></span>
-        {{ chunk.text }}
-      </article>
+  <header class="top-bar">
+    <div class="top-bar__identity">
+      <h1 class="doc-title">{{ title }}</h1>
+      <div id="section-heading" class="section-line">{% if section_heading %}{{ section_heading }}{% endif %}</div>
+    </div>
+    <div class="top-bar__progress" aria-label="Reading progress">
+      <span class="progress-text">{{ progress_current }} / {{ progress_total }}</span>
+      <div class="progress-bar" role="progressbar"
+           aria-valuemin="0" aria-valuemax="{{ progress_total }}"
+           aria-valuenow="{{ progress_current }}">
+        <div class="progress-bar__fill" style="width: {{ progress_percent }}%"></div>
+      </div>
+    </div>
+    <div class="top-bar__tokens" aria-label="Reveal tokens"
+         style="--regen-seconds: {{ regen_seconds }}s">
+      {% for cls in dot_classes %}
+      <span class="dot dot--{{ cls }}" aria-hidden="true">{% if cls == 'filled' %}●{% else %}○{% endif %}</span>
       {% endfor %}
-      <nav class="rating-prompt" aria-label="Rate effort">
-        {% for r in [1, 2, 3, 4, 5] %}
-        <button type="button" class="rating-button" data-rating="{{ r }}">{{ r }}</button>
-        {% if not loop.last %}<span class="rating-sep" aria-hidden="true">·</span>{% endif %}
+    </div>
+  </header>
+  <div class="reader-scroll">
+    <div class="layout">
+      <aside class="gutter gutter--left"></aside>
+      <section class="column">
+        {% for chunk in visible_chunks %}
+        <article
+          class="chunk {% if chunk.position == current_position %}chunk--current{% else %}chunk--settled{% endif %}"
+          data-chunk-position="{{ chunk.position }}"
+        >
+          <span class="pin-dot"
+            {% if chunk.position in pin_colors %}data-pin-color="{{ pin_colors[chunk.position] }}"{% endif %}
+          ></span>
+          {{ chunk.text }}
+        </article>
         {% endfor %}
-      </nav>
-      {% if bucket_empty %}
-      <aside class="countdown" data-seconds="{{ seconds_until_token }}">
-        <div class="countdown-text">Next reveal in {{ seconds_until_token }}s</div>
-        <div class="countdown-reminders">Persist · Rate · Ask</div>
-      </aside>
-      {% endif %}
-    </section>
-    <aside class="gutter gutter--right"></aside>
+        <nav class="rating-prompt" aria-label="Rate effort">
+          {% for r in [1, 2, 3, 4, 5] %}
+          <button type="button" class="rating-button" data-rating="{{ r }}">{{ r }}</button>
+          {% if not loop.last %}<span class="rating-sep" aria-hidden="true">·</span>{% endif %}
+          {% endfor %}
+        </nav>
+        {% if bucket_empty %}
+        <aside class="countdown" data-seconds="{{ seconds_until_token }}">
+          <div class="countdown-text">Next reveal in {{ seconds_until_token }}s</div>
+          <div class="countdown-reminders">Persist · Rate · Ask</div>
+        </aside>
+        {% endif %}
+      </section>
+      <aside class="gutter gutter--right"></aside>
+    </div>
   </div>
 </main>

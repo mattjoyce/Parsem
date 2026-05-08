@@ -128,8 +128,7 @@ def test_heading_followed_by_short_paragraph_absorbs_into_one_chunk() -> None:
 
 def test_heading_followed_by_long_paragraph_absorbs_prefix_and_emits_remainder() -> None:
     long_para = " ".join(
-        f"This is paragraph sentence number {i} padded with several extra words."
-        for i in range(20)
+        f"This is paragraph sentence number {i} padded with several extra words." for i in range(20)
     )
     blocks = [
         _block("heading", "# Title", heading_level=1, start=0),

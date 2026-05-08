@@ -162,12 +162,14 @@ def test_reveal_times_filters_by_document_id() -> None:
 
 
 def test_reveal_times_feeds_directly_into_tokens_now() -> None:
+    # Pinned to capacity=3 to verify the integration regardless of the
+    # production default (spec §12.1: fixed at 5).
     log = EventLog()
     log.reveal(document_id=1, chunk_id=1, created_at=T0)
     log.reveal(document_id=1, chunk_id=2, created_at=T0 + timedelta(seconds=1))
     log.reveal(document_id=1, chunk_id=3, created_at=T0 + timedelta(seconds=2))
     times = log.reveal_times_for_document(1)
-    config = BucketConfig()
+    config = BucketConfig(capacity=3)
     assert tokens_now(times, config, T0 + timedelta(seconds=2)) == 0
 
 

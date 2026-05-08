@@ -87,9 +87,7 @@ def chunk(blocks: list[ParsedBlock], config: ChunkingConfig) -> ChunkerOutput:
         block = blocks[i]
         next_block = blocks[i + 1] if i + 1 < len(blocks) else None
         if block.type == "heading":
-            heading_chunks, consumed_next = _absorb_heading(
-                block, next_block, config, len(chunks)
-            )
+            heading_chunks, consumed_next = _absorb_heading(block, next_block, config, len(chunks))
             chunks.extend(heading_chunks)
             i += 2 if consumed_next else 1
         elif block.type == "paragraph":

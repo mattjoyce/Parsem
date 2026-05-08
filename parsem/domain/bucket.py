@@ -18,9 +18,16 @@ from datetime import datetime
 
 @dataclass(frozen=True)
 class BucketConfig:
-    """Reading-economy bucket configuration. Defaults match spec §20."""
+    """Reading-economy bucket configuration. Defaults match spec §20.
 
-    capacity: int = 3
+    ``capacity`` is fixed at 5 by product decision (spec §12.1) — five is the
+    upper edge of glanceable subitization, and a higher cap would weaken the
+    deliberate-friction thesis. Tests that need to exercise small-capacity
+    edge cases pin ``BucketConfig(capacity=N)`` explicitly; production
+    construction takes the default.
+    """
+
+    capacity: int = 5
     regen_seconds: int = 12
     start_full: bool = True
     fresh_session_idle_multiplier: int = 5
