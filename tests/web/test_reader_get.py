@@ -26,16 +26,21 @@ def test_get_reader_returns_full_html_document(client: TestClient) -> None:
 def test_reader_renders_chunks_with_data_chunk_position(
     client: TestClient, state: ReaderState
 ) -> None:
-    state.current_position = 4  # mid-doc so a window of K=5 is fully populated
+    # Section 2 of welcome.md spans chunks 12-18; current=16 puts us K=5
+    # deep into that section so the section-clamped window (Parsem-apa)
+    # is fully populated with [12, 13, 14, 15, 16].
+    state.current_position = 16
     response = client.get("/reader")
-    for pos in (0, 1, 2, 3, 4):
+    for pos in (12, 13, 14, 15, 16):
         assert f'data-chunk-position="{pos}"' in response.text
 
 
 def test_reader_marks_current_chunk_distinctly_from_settled(
     client: TestClient, state: ReaderState
 ) -> None:
-    state.current_position = 4
+    # current=16 keeps the windowed view fully populated within section 2
+    # (Parsem-apa clamps to section start).
+    state.current_position = 16
     response = client.get("/reader")
     assert "chunk--current" in response.text
     assert "chunk--settled" in response.text

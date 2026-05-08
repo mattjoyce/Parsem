@@ -1,11 +1,7 @@
 """Reader view helpers — pure functions that turn ReaderState into a
 template context dict. Spec: parsem-spec.md §9.5, §15.
 
-Presentation logic only; no IO, no clock, no global state. Forward-compat
-note: when Parsem-apa lands section-boundary window clearing, the
-``windowed_chunks`` window start grows from ``current - (k-1)`` to
-``max(section_start, current - (k-1))`` — same call site, same return
-type, just an additional input.
+Presentation logic only; no IO, no clock, no global state.
 """
 
 from __future__ import annotations
@@ -43,12 +39,22 @@ def next_chunk(chunks: list[Chunk], current: int) -> Chunk | None:
     return None
 
 
-def windowed_chunks(chunks: list[Chunk], current: int, k: int) -> list[Chunk]:
-    """Return the last ``k`` chunks ending at ``current``, clamped at zero.
-
-    The slice is inclusive of ``current``: positions ``[max(0, current-k+1) .. current]``.
+def windowed_chunks(
+    chunks: list[Chunk], current: int, k: int, sections: list[Section]
+) -> list[Chunk]:
+    """Return the last ``k`` chunks ending at ``current``, clamped both at
+    zero AND at the start of the section containing ``current``. The
+    section clamp implements spec §15.1's "window clears at every heading":
+    when the reader crosses into a new section, the prior section's chunks
+    vanish from the visible window. (Parsem-apa.)
     """
-    return chunks[max(0, current - (k - 1)) : current + 1]
+    section_start = 0
+    for section in sections:
+        if section.start_chunk_position <= current <= section.end_chunk_position:
+            section_start = section.start_chunk_position
+            break
+    start = max(section_start, current - (k - 1))
+    return chunks[start : current + 1]
 
 
 def current_section_heading(
@@ -103,7 +109,7 @@ def build_reader_context(state: ReaderState, *, k: int = WINDOW_K) -> dict[str, 
     rejection motion (CSS animation triggered by JS reading the
     ``X-Reveal-Outcome`` header) carries "why not now."
     """
-    visible = windowed_chunks(state.chunks, state.current_position, k)
+    visible = windowed_chunks(state.chunks, state.current_position, k, state.sections)
     filled = tokens_now(state.paid_reveal_times, state.bucket_config, state.clock())
     progress_current = state.current_position + 1
     progress_total = len(state.chunks)
