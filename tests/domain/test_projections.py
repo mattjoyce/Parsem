@@ -9,6 +9,8 @@ from pathlib import Path
 from parsem.domain.projections import (
     ReadingState,
     apply_event,
+    apply_rating_event,
+    build_chunk_ratings,
     build_reading_state,
     empty_reading_state,
     resume_position,
@@ -150,11 +152,68 @@ def test_resume_position_with_warm_chunks_zero_returns_high_water() -> None:
     assert resume_position(state, warm_chunks=0) == 7
 
 
+# ─── chunk_ratings projection (Parsem-1na) ────────────────────────────
+
+
+def test_build_chunk_ratings_with_no_events_returns_empty_dict() -> None:
+    assert build_chunk_ratings(document_id=1, events=[]) == {}
+
+
+def test_single_rate_effort_event_records_position_to_rating() -> None:
+    events = [_ev(id=1, event_type="rate_effort", chunk_id=5, payload={"rating": 4})]
+    assert build_chunk_ratings(document_id=1, events=events) == {5: 4}
+
+
+def test_multiple_ratings_on_same_position_keeps_only_latest() -> None:
+    events = [
+        _ev(id=1, event_type="rate_effort", chunk_id=5, payload={"rating": 2}),
+        _ev(id=2, event_type="rate_effort", chunk_id=5, payload={"rating": 5}),
+        _ev(id=3, event_type="rate_effort", chunk_id=5, payload={"rating": 3}),
+    ]
+    assert build_chunk_ratings(document_id=1, events=events) == {5: 3}
+
+
+def test_non_rate_effort_events_do_not_appear_in_ratings_dict() -> None:
+    events = [
+        _ev(id=1, event_type="reveal", chunk_id=5),
+        _ev(id=2, event_type="conceal", chunk_id=4),
+        _ev(id=3, event_type="pin_set", chunk_id=5, payload={"color_id": 2}),
+        _ev(id=4, event_type="pin_clear", chunk_id=5),
+        _ev(id=5, event_type="open_document"),
+        _ev(id=6, event_type="close_document"),
+    ]
+    assert build_chunk_ratings(document_id=1, events=events) == {}
+
+
+def test_events_from_other_documents_are_filtered_out() -> None:
+    events = [
+        _ev(id=1, document_id=1, event_type="rate_effort", chunk_id=5, payload={"rating": 4}),
+        _ev(id=2, document_id=2, event_type="rate_effort", chunk_id=5, payload={"rating": 1}),
+        _ev(id=3, document_id=1, event_type="rate_effort", chunk_id=7, payload={"rating": 5}),
+    ]
+    assert build_chunk_ratings(document_id=1, events=events) == {5: 4, 7: 5}
+
+
+def test_apply_rating_event_is_pure() -> None:
+    seed: dict[int, int] = {3: 2}
+    next_state = apply_rating_event(
+        seed, _ev(id=1, event_type="rate_effort", chunk_id=3, payload={"rating": 5})
+    )
+    assert seed == {3: 2}
+    assert next_state == {3: 5}
+
+
 def test_projections_module_does_not_import_from_web_or_store_internals() -> None:
-    """Spec §18.1: domain doesn't depend on web. Only ReadingEvent is
-    imported from store (a value type — the projection has to know
-    what an event looks like)."""
+    """Spec §18.1: domain doesn't depend on web. Only the event value
+    types (`ReadingEvent` and its payload TypedDicts) are imported from
+    store — the projection has to know what an event looks like."""
     tree = ast.parse(Path("parsem/domain/projections.py").read_text(encoding="utf-8"))
+    allowed_from_store = {
+        "ReadingEvent",
+        "RateEffortPayload",
+        "PinSetPayload",
+        "rate_effort_rating",
+    }
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:
             assert not node.module.startswith("parsem.web"), (
@@ -162,9 +221,9 @@ def test_projections_module_does_not_import_from_web_or_store_internals() -> Non
             )
             if node.module.startswith("parsem.store"):
                 imported_names = {alias.name for alias in node.names}
-                assert imported_names <= {"ReadingEvent"}, (
-                    f"projections.py may only import ReadingEvent from parsem.store, "
-                    f"got {imported_names}"
+                assert imported_names <= allowed_from_store, (
+                    f"projections.py may only import event value types from "
+                    f"parsem.store, got {imported_names}"
                 )
         elif isinstance(node, ast.Import):
             for alias in node.names:

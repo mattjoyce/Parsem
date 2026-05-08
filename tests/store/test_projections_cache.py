@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import sqlite3
 from datetime import timedelta
-from functools import partial
 from pathlib import Path
 
 import pytest
@@ -15,8 +14,8 @@ from parsem.store.db import connect, migrate
 from parsem.store.documents import insert_document
 from parsem.store.events import EventLog
 from parsem.store.projections_cache import (
-    apply_to_reading_state,
     load_reading_state,
+    make_event_log,
     rebuild_reading_state,
 )
 from tests.conftest import T0
@@ -33,9 +32,9 @@ def db() -> sqlite3.Connection:
 
 @pytest.fixture
 def hooked_log(db: sqlite3.Connection) -> EventLog:
-    """EventLog wired with the projection-cache hook — every write
-    keeps reading_state fresh."""
-    return EventLog(db, on_event=partial(apply_to_reading_state, db))
+    """EventLog wired with the production projection composer —
+    `make_event_log` fans out to every projection and commits once."""
+    return make_event_log(db)
 
 
 def test_load_returns_none_for_unseen_document(db: sqlite3.Connection) -> None:
@@ -109,7 +108,7 @@ def test_non_positional_events_advance_event_cursor_only(
 def test_rebuild_from_events_matches_incremental(db: sqlite3.Connection) -> None:
     """Spec §18.5 — rebuild produces the same projection as the
     incremental cache that received the same events."""
-    incremental = EventLog(db, on_event=partial(apply_to_reading_state, db))
+    incremental = make_event_log(db)
     incremental.reveal(document_id=1, chunk_id=0, created_at=T0)
     incremental.reveal(document_id=1, chunk_id=1, created_at=T0 + timedelta(seconds=1))
     incremental.conceal(document_id=1, chunk_id=0, created_at=T0 + timedelta(seconds=2))
@@ -130,7 +129,7 @@ def test_rebuild_from_events_matches_incremental(db: sqlite3.Connection) -> None
 
 def test_rebuild_matches_pure_builder(db: sqlite3.Connection) -> None:
     """Sanity: the cache rebuild and the pure builder agree event-for-event."""
-    log = EventLog(db, on_event=partial(apply_to_reading_state, db))
+    log = make_event_log(db)
     log.reveal(document_id=1, chunk_id=0, created_at=T0)
     log.reveal(document_id=1, chunk_id=1, created_at=T0 + timedelta(seconds=1))
     log.reveal(document_id=1, chunk_id=2, created_at=T0 + timedelta(seconds=2))

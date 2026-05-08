@@ -24,7 +24,7 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, cast
 
 EventType = Literal[
     "reveal",
@@ -172,6 +172,16 @@ class EventLog:
             self._conn.rollback()
             raise
         return event
+
+
+def rate_effort_rating(event: ReadingEvent) -> int | None:
+    """Centralized payload narrowing — events.py owns the invariant
+    that `rate_effort` events always carry a `RateEffortPayload`. Any
+    callsite that needs the rating int from a generic ReadingEvent
+    routes through here so the union narrowing lives in one place."""
+    if event.event_type != "rate_effort":
+        return None
+    return cast(RateEffortPayload, event.payload)["rating"]
 
 
 def _row_to_event(row: sqlite3.Row) -> ReadingEvent:

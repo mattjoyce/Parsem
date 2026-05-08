@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from functools import reduce
 
-from parsem.store.events import ReadingEvent
+from parsem.store.events import ReadingEvent, rate_effort_rating
 
 
 @dataclass(frozen=True)
@@ -83,3 +83,30 @@ def resume_position(state: ReadingState, warm_chunks: int) -> int:
     clamped at 0. The N warm chunks are paid territory — re-reading
     them is free."""
     return max(0, state.high_water_position - warm_chunks)
+
+
+# ─── chunk_ratings projection (Parsem-1na) ────────────────────────────
+
+
+def apply_rating_event(
+    ratings: dict[int, int], event: ReadingEvent
+) -> dict[int, int]:
+    """Latest-wins fold of one event into a position→rating dict.
+
+    Ignores any event type that isn't `rate_effort`. Event ids are
+    monotonic via AUTOINCREMENT, so plain dict overwrite gives the
+    latest-rating-wins semantics §21 requires.
+    """
+    rating = rate_effort_rating(event)
+    if rating is None or event.chunk_id is None:
+        return ratings
+    return {**ratings, event.chunk_id: rating}
+
+
+def build_chunk_ratings(
+    document_id: int, events: list[ReadingEvent]
+) -> dict[int, int]:
+    """Project rate_effort events into a position-keyed ratings dict
+    for one document. Events from other documents are filtered out."""
+    scoped = [e for e in events if e.document_id == document_id]
+    return reduce(apply_rating_event, scoped, {})
