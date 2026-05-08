@@ -167,6 +167,14 @@ Keyboard is the primary reading mode. Mouse/touch may mirror these later but the
 | `?`       | Show cheat-sheet overlay (Esc to close); also reserved for Ask placeholder |
 | Esc       | Close panel / focus mode                |
 
+### 8.1 Return-first rule
+
+Action keys (Space, Backspace, 1–5, P) are bound to the **active chunk** — the chunk at `current_position`. The active chunk is at its **canonical position** when its bottom edge is within ±20px of 70% of the reading viewport's height (see §9.5); outside that band, the reader is considered scrolled away. When the reader has scrolled away (e.g. they've scrolled back to look at earlier text), the first press of any action key is interpreted as *"bring me back"*: the viewport smooth-scrolls the active chunk to its canonical position and no other action runs. The second press performs the action.
+
+This makes Space self-teaching: a reader who scrolled back and presses Space sees the system gather them back rather than steal them forward, and on the next press the reveal happens at the active position. The rule is uniform across all action keys — there is no special-case behaviour per key.
+
+The rule applies only to action keys. Manual scroll (mouse wheel, Page Down) is sovereign and never auto-corrected.
+
 ---
 
 ## 9. Reader Experience
@@ -204,26 +212,26 @@ If `high_water − N < 0`, clamp to 0. If the warm-restore lands across a sectio
 
 ### 9.5 Reading surface
 
-The reading area uses three vertical regions:
+The reader screen is structured into a **persistent top bar**, a **scrolling reading area**, and three vertical regions inside that area:
 
 ```
+[ ─── top bar: title · progress · token pictograph ─── ]   ← persistent, outside scroll
+
 [ left gutter (~16px) ]  [ main reading column (max 720px) ]  [ right gutter (~16px) ]
    pin colour dots          windowed view + current chunk       reserved for future sidebar
 ```
 
-The **main column** shows:
+The **top bar** carries global session context — document title, progress (a fraction `current+1 / total` plus a thin progress bar underneath), and the token pictograph (see §12.5). It sits outside the scroll context so it never moves while the reader scrolls. The current section's heading collapses into the top bar (as a secondary line under the title) once the reader has scrolled past the first H2; above the first H2, only the document title shows.
 
-- A sticky heading banner at the top (current section)
-- A windowed view of the last **K = 5** settled chunks above the current chunk, faded to 70% opacity
-- The **current chunk** at full opacity, optional 2px subtle left-border accent
-- Below the current chunk, a subtle rating prompt: `1 · 2 · 3 · 4 · 5`
-- Below that, when the bucket is empty: a countdown — *"Next reveal in 7s"* — plus inline reminders: `Persist · Rate · Ask`
+The **reading viewport** is the scrollable element that contains the main column and excludes the top bar — typically a `<div class="reader-scroll">` wrapping the partial fragment. The main column is anchored within the reading viewport so that the **current chunk's bottom edge sits at ~70% of the viewport's height**. The bottom 30% is a **preview gutter**: it renders the next chunk in a blurred, slightly faded state (~5px blur, opacity ~0.6 with a subtle continuous pulse). The preview is preparation, not a tease — it lets the eye anticipate what is coming without permitting the reader to actually read ahead. On reveal, the preview's blur lifts and its opacity climbs while the column smooth-scrolls upward to bring the new current chunk to the same 70% anchor.
+
+Above the current chunk, the main column shows a windowed view of the last `window_k − 1` settled chunks (default 4 — see §15), faded to 70% opacity, so 5 chunks total are visible: 4 settled + 1 current. A subtle 2px left-border accent marks the current chunk. Below the current chunk and above the preview gutter, a soft rating prompt `1 · 2 · 3 · 4 · 5` is always visible.
 
 The **left gutter** shows pin colour dots aligned with each chunk.
 
 The **right gutter** is empty in MVP but reserved in CSS so future expansion (notes, chunk Q&A) does not reflow the main column.
 
-The window **clears** at every heading — when the reader crosses into a new section, the prior section's chunks vanish from the visible window and the new section's heading becomes the sticky banner. Backward navigation across the boundary repopulates the prior section's window.
+The window **clears** at every heading — when the reader crosses into a new section, the prior section's chunks vanish from the visible window and the new section's heading becomes the top bar's section line. Backward navigation across the boundary repopulates the prior section's window.
 
 ---
 
@@ -287,8 +295,8 @@ The economy paces advancement through a **per-document** token bucket.
 
 ### 12.1 Tokens, capacity, and regen
 
-- `bucket.capacity` (default 3) is the maximum number of tokens.
-- `bucket.regen_seconds` (default 12; user's pace knob) is the regen interval.
+- `bucket.capacity` is **fixed at 5**. It is not exposed in the settings UI. Pace tuning happens via WPM scalers and `regen_seconds`, never via capacity. The cap is opinionated — five is the upper limit of glanceable subitization, and a higher cap would weaken the deliberate-friction thesis (§2). The valve has a fixed throat; only the regen rate moves.
+- `bucket.regen_seconds` (default 12; the user's pace knob) is the regen interval.
 - `bucket.start_full = true` — opening a document gives the reader a full bucket.
 
 ### 12.2 Computed, not stored
@@ -308,17 +316,23 @@ All costs are configurable in `settings.config_json`. Rate, conceal, and pin are
 
 Re-revealing the current chunk or any chunk at position ≤ `high_water_position` is **free**. The system tracks the highest-position chunk paid for. Tokens are spent only on advancing into new territory.
 
-### 12.5 Empty-bucket UX
+### 12.5 Empty-bucket UX — token pictograph and rejection motion
 
-When the bucket is empty, Reveal does not silently fail. Instead, the reader sees:
+The bucket's state is communicated through two channels, both visual and quiet, neither textual.
 
-```
-Next reveal in 7s
-Rate effort  1 · 2 · 3 · 4 · 5
-Persist · Ask
-```
+**Token pictograph (top bar, always visible).** Five dots fixed: `●` filled = available, `○` open = empty. The next-to-fill dot fades in (opacity 0 → 1 over `regen_seconds`), giving a peripheral-vision cue for "next token in roughly N seconds." Once full, all dots are `●` and the fade animation pauses.
 
-A small countdown ticks down on the client. When tokens regen, the prompt clears. The wait window is a natural opportunity for the reader to use the alternative actions — rate the current chunk, pin it, ask (post-MVP).
+The pictograph is the only persistent answer to *"when can I reveal next."* There is no ticking text countdown.
+
+**Rejection motion (in the reading area).** When the reader presses Space at the active position with an empty bucket, the system responds in motion, not in words. Timings below are starting points, tuned for feel; an implementation may adjust within ±50ms per phase:
+
+1. The current chunk and the blurred preview translate upward by ~one chunk-height as if advancing (~250ms).
+2. They hold at the advanced position; the current chunk's left-border accent briefly thickens and shifts to a soft amber (~150ms).
+3. They translate back to rest (~250ms).
+
+The whole sequence is ~650ms of soft motion. The reader sees that the system received the keystroke and that the answer is "wait." There is no banner, no flash, no chrome — *the rejection is felt in the body of the page itself*.
+
+If the reader pressed Space while scrolled away from the active position, the return-first rule (§8.1) handles the keystroke and the rejection motion does not run. The reader must be at the gate to be told the gate is closed.
 
 ### 12.6 Fresh-session credit
 
@@ -381,7 +395,7 @@ The effort rating produces a heatmap of cognitive effort per chunk, used by the 
 - 1–5 keypress on the current chunk records an effort event.
 - Optional, anytime, non-advancing.
 - Re-rating is allowed; latest wins; full history kept in `reading_events`.
-- Backward navigation lets the reader re-rate prior chunks.
+- Re-rating prior chunks (a chunk other than the current one) is deferred. In Phase 1 the return-first rule (§8.1) routes any 1–5 press while scrolled away into a return-scroll, after which the second press rates the active chunk. A future bead introduces explicit "rate the chunk under cursor" semantics for backward navigation.
 
 ### 14.3 Display
 
@@ -403,6 +417,8 @@ The window **clears** when the reader crosses a heading. The new section's headi
 
 `Shift+Up` enters review mode: the windowed K expands so the reader can scroll further into the past without changing their `current_position`. `Esc` exits review mode and returns to the prior view. Pins can be created, ratings can be recorded, while in review mode.
 
+In Phase 1, the return-first rule (§8.1) applies inside review mode as well — pins and ratings while in review mode target the **active chunk** after the return-scroll, not the chunk the reader has scrolled to. Targeting the chunk under the cursor (i.e. true backward annotation) lands with the rate-prior-chunk bead.
+
 ### 15.3 Presentation
 
 Configurable:
@@ -416,6 +432,16 @@ Configurable:
 
 Presentation prefs live in browser localStorage (single-machine, single-user). Server has nothing to know.
 
+### 15.4 Character
+
+The reader's character has two axes that should never collapse into each other.
+
+**Visual / motion axis: smooth, graceful, gentle.** Motion communicates state — the empty-bucket rejection is a soft pretend-advance with an amber pulse, not a banner. Surfaces are soft (paper background, subtle borders, blurred preview that reads as *forming* rather than *withheld*). Feedback is felt more than seen — peripheral cues over centre-of-attention chrome.
+
+**Behaviour / boundary axis: firm and bounded.** The token bucket is a valve, not a game. Tokens are not earned through actions (no rate-to-earn, no conceal-to-refund); they regenerate on time alone. The UI must never read as a score: the pictograph is fixed at five dots, no counters, no streaks, no badges. Capacity is not user-configurable — only the WPM scalers and regen interval are. Defaults are opinionated.
+
+The two axes work together: Parsem is gentle in *how* it communicates and firm about *what* it allows. *"You came to do something, and this is how we do it here. Other places may be different."* When in doubt about a feature, ask whether it would belong in a meditation room. If yes, it fits. If it would belong in a productivity app or a video game, it does not.
+
 ---
 
 ## 16. Multi-Tab and Multi-Window
@@ -426,7 +452,7 @@ Multiple tabs or windows on the same document are **allowed**. The event log sta
 
 Each open tab/window polls `/documents/{id}/version` every `view.sync_interval_seconds` (default 2s). When the server's max event timestamp for the document changes, the tab re-fetches the rendered reader fragment and swaps it in. All tabs stay within ~2s of truth.
 
-The bucket is server-authoritative. If two tabs both attempt to advance at near-simultaneous moments, the second hits the empty-bucket countdown UX rather than double-spending.
+The bucket is server-authoritative. If two tabs both attempt to advance at near-simultaneous moments, the second sees the rejection motion (§12.5) rather than double-spending.
 
 ### 16.2 Cross-browser limitation
 
@@ -535,8 +561,8 @@ If the projection cache drifts from the event log (detected by `last_event_id_ap
 ## 19. Tech Stack
 
 - **Backend**: Python + FastAPI. Domain modules pure-Python, FastAPI is just transport.
-- **Templates**: Jinja2 + HTMX for partial updates on Reveal/Conceal/Pin/Rate.
-- **Client JS**: ~50–100 lines, vanilla. Keyboard handling, bucket countdown timer, polling sync, pin cycle navigation.
+- **Templates**: Jinja2. POST routes return partial fragments (§22). Client-side swaps are driven by vanilla `fetch` + `outerHTML` replacement; HTMX is intentionally not in the stack ("explicit beats magical").
+- **Client JS**: ~50–150 lines, vanilla. Keyboard handling, smooth-scroll, return-first rule (§8.1), token pictograph regen animation, rejection motion (§12.5), polling sync, pin cycle navigation.
 - **Database**: SQLite with `journal_mode=WAL`, `foreign_keys=ON`, `synchronous=NORMAL`.
 - **Markdown parser**: `markdown-it-py` (token stream output, source offsets, plug-in friendly).
 - **Sentence detection**: `pysbd`.
@@ -549,6 +575,8 @@ Local LLM (post-MVP) options: Ollama, LM Studio local server, OpenAI-compatible 
 
 Configuration lives in a single `settings` row (`config_json` blob) and is mirrored into the editing UI via the `,` settings panel. Per-document overrides live in `documents.preference_overrides_json` (NULL = use global; UI exposure deferred post-MVP).
 
+Some values are deliberately **not user-configurable**, even though they are stored alongside the rest. `bucket.capacity` is one — see §12.1 for rationale.
+
 ```yaml
 chunking:
   budget_seconds: 10
@@ -559,7 +587,7 @@ chunking:
   list_handling: item         # item | block | prose
 
 bucket:
-  capacity: 3
+  capacity: 5                 # FIXED — not exposed in the settings UI (§12.1)
   regen_seconds: 12           # the user's pace knob
   start_full: true
   fresh_session_idle_multiplier: 5
@@ -703,6 +731,8 @@ CREATE TABLE settings (
 
 ## 22. Routes
 
+GET routes return full HTML pages (`<html>...</html>`). POST routes return only the **`<main id="reader-main">…</main>` partial fragment** — the full page wraps the partial via `{% include %}`, and client-side swaps replace the `<main>` element via `outerHTML`. The top bar lives in the full shell, outside the swap target, so it never reloads on action.
+
 ```
 # Browser views
 GET   /                            → redirect to /library
@@ -710,9 +740,9 @@ GET   /library                     → library page
 GET   /upload                      → upload form
 POST  /upload                      → ingest .md; parse synchronously; redirect
 
-GET   /documents/{id}/reader       → reader page
+GET   /documents/{id}/reader       → reader page (full HTML)
 
-# Reader actions (HTMX → HTML fragments)
+# Reader actions (return partial fragment, JS swaps #reader-main)
 POST  /documents/{id}/reveal       → advance current_position
 POST  /documents/{id}/conceal      → retreat one chunk
 POST  /documents/{id}/rate         → {chunk_id, rating}
@@ -722,7 +752,7 @@ POST  /documents/{id}/return       → return to pre-jump position
 GET   /documents/{id}/version      → tiny JSON {version} for 2s poll-sync
 
 # Document management
-POST  /documents/{id}/rename       → {title}; HTMX OOB swap
+POST  /documents/{id}/rename       → {title}; returns the updated library-row fragment
 POST  /documents/{id}/delete       → hard delete; redirect to /library
 POST  /documents/{id}/retry-parse  → re-parse; redirect
 
@@ -778,7 +808,7 @@ Build:
 - `domain/bucket.py` (pure-function token computation)
 - Reader screen: windowed view K=5, left gutter pin dots, right gutter reserved
 - Keyboard: Space, Backspace, P (cycle 5 colours), 1–5, `]` `[`, Shift+Up, `'`, Esc
-- Bucket countdown UX, fresh-session credit, empty-bucket prompt
+- Token pictograph + rejection motion (§12.5), fresh-session credit, return-first rule (§8.1)
 - Section-boundary window clear, sticky heading banner
 
 ### Phase 2 — Library, Markdown ingestion, persistence
