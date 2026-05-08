@@ -35,4 +35,6 @@ class ReaderState:
     high_water_position: int = 0
     pin_colors: dict[int, int] = field(default_factory=dict)
     paid_reveal_times: list[datetime] = field(default_factory=list)
+    last_active_pin_color: int | None = None
+    pre_jump_position: int | None = None
     clock: Callable[[], datetime] = field(default=_utcnow)

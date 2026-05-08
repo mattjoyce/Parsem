@@ -25,6 +25,9 @@
     "5":         { method: "POST", url: "/rate", body: { rating: 5 } },
     "p":         { method: "POST", url: "/pin" },
     "P":         { method: "POST", url: "/pin" },
+    "]":         { method: "POST", url: "/jump-to-pin", body: { direction: "next" } },
+    "[":         { method: "POST", url: "/jump-to-pin", body: { direction: "prev" } },
+    "'":         { method: "POST", url: "/return" },
   };
 
   function scrollContainer() {

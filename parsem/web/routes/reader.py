@@ -6,6 +6,8 @@ domain helpers. No bucket math, no chunking, no business rules in here.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
@@ -17,6 +19,10 @@ from parsem.web.view import build_reader_context
 
 class RateBody(BaseModel):
     rating: int = Field(ge=1, le=5)
+
+
+class JumpBody(BaseModel):
+    direction: Literal["next", "prev"]
 
 
 router = APIRouter()
@@ -56,12 +62,60 @@ def post_pin(request: Request) -> HTMLResponse:
         )
     else:
         state.pin_colors[chunk_pos] = new_color
+        state.last_active_pin_color = new_color
         state.event_log.pin_set(
             document_id=state.document_id,
             chunk_id=chunk_pos,
             color_id=new_color,
             created_at=now,
         )
+    return _render_partial(request, state)
+
+
+def _find_jump_target(state: ReaderState, direction: str) -> int | None:
+    """Return chunk position of the next/prev pin (filtered by active colour
+    if set, else any colour), with wrap-around. None when the jump would not
+    move (no pins, or the only matching pin is at current_position).
+    """
+    pins = state.pin_colors
+    if state.last_active_pin_color is not None:
+        pins = {p: c for p, c in pins.items() if c == state.last_active_pin_color}
+    if not pins:
+        return None
+    positions = sorted(pins)
+    current = state.current_position
+    if direction == "next":
+        ahead = [p for p in positions if p > current]
+        target = ahead[0] if ahead else positions[0]
+    else:
+        behind = [p for p in positions if p < current]
+        target = behind[-1] if behind else positions[-1]
+    return None if target == current else target
+
+
+@router.post("/jump-to-pin", response_class=HTMLResponse)
+def post_jump_to_pin(request: Request, body: JumpBody) -> HTMLResponse:
+    state = _state(request)
+    target = _find_jump_target(state, body.direction)
+    if target is None:
+        return _render_partial(request, state)
+    state.pre_jump_position = state.current_position
+    state.current_position = target
+    state.last_active_pin_color = state.pin_colors.get(target, state.last_active_pin_color)
+    response = _render_partial(request, state)
+    response.headers["X-Reveal-Outcome"] = "advanced_free"
+    return response
+
+
+@router.post("/return", response_class=HTMLResponse)
+def post_return(request: Request) -> HTMLResponse:
+    state = _state(request)
+    if state.pre_jump_position is not None:
+        state.current_position = state.pre_jump_position
+        state.pre_jump_position = None
+        response = _render_partial(request, state)
+        response.headers["X-Reveal-Outcome"] = "advanced_free"
+        return response
     return _render_partial(request, state)
 
 

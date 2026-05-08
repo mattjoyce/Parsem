@@ -31,6 +31,9 @@ EXPECTED_BINDINGS: dict[str, str] = {
     "5": "/rate",
     "p": "/pin",
     "P": "/pin",
+    "]": "/jump-to-pin",
+    "[": "/jump-to-pin",
+    "'": "/return",
 }
 
 
@@ -51,8 +54,9 @@ def test_reader_js_binds_escape_to_exit_review_mode(reader_js_source: str) -> No
 
 
 def test_reader_js_does_not_wire_deferred_keys(reader_js_source: str) -> None:
-    """`]`, `[`, `'`, `,`, `:`, `?` are deferred to future beads (no backend)."""
-    for deferred_key in ("]", "[", "'"):
+    """`,`, `:`, `?` are deferred to future beads (no backend yet). Pin
+    navigation keys (`]`, `[`, `'`) are now wired (Parsem-1pg)."""
+    for deferred_key in (",", ":", "?"):
         assert f'"{deferred_key}":' not in reader_js_source, (
             f"unexpected handler for {deferred_key!r}"
         )
