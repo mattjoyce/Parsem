@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Parsem — Upload</title>
+  <link rel="stylesheet" href="/static/reader.css">
+</head>
+<body>
+<main class="upload-page">
+  <h1>Upload a Markdown file</h1>
+  <form action="/upload" method="post" enctype="multipart/form-data">
+    <input type="file" name="file" accept=".md,text/markdown" required>
+    <button type="submit">Open</button>
+  </form>
+</main>
+</body>
+</html>

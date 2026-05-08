@@ -143,6 +143,58 @@ def insert_chunks_and_sections(
         raise
 
 
+def mark_document_ready(
+    conn: sqlite3.Connection,
+    document_id: int,
+    *,
+    total_chunks: int,
+    now: datetime,
+) -> None:
+    """Final state of a successful upload pipeline (spec §17.1):
+    `status='ready'`, `total_chunks` set, `failure_reason` cleared."""
+    conn.execute(
+        "UPDATE documents SET status='ready', total_chunks=?,"
+        " failure_reason=NULL, updated_at=? WHERE id=?",
+        (total_chunks, now.isoformat(), document_id),
+    )
+    conn.commit()
+
+
+def mark_document_failed(
+    conn: sqlite3.Connection,
+    document_id: int,
+    *,
+    reason: str,
+    now: datetime,
+) -> None:
+    """Final state of a failed upload pipeline (spec §17.2):
+    `status='failed'` with a human-readable `failure_reason`."""
+    conn.execute(
+        "UPDATE documents SET status='failed', failure_reason=?,"
+        " updated_at=? WHERE id=?",
+        (reason, now.isoformat(), document_id),
+    )
+    conn.commit()
+
+
+def update_document_original_path(
+    conn: sqlite3.Connection,
+    document_id: int,
+    *,
+    original_path: str,
+    now: datetime,
+) -> None:
+    """Patch original_path after the file has been written. Two-step
+    insert: documents row goes in first (with a placeholder path) so we
+    have an id; the file lands at `data/originals/{id}.md`; then this
+    UPDATE records the resolved path."""
+    conn.execute(
+        "UPDATE documents SET original_path=?, updated_at=? WHERE id=?",
+        (original_path, now.isoformat(), document_id),
+    )
+    conn.commit()
+
+
 def load_document(conn: sqlite3.Connection, document_id: int) -> Document | None:
     row = conn.execute(
         "SELECT id, title, source_type, original_path, status, failure_reason,"

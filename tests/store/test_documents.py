@@ -254,6 +254,52 @@ def test_welcome_full_round_trip(db: sqlite3.Connection, doc_id: int) -> None:
     assert load_sections_for_document(db, doc_id) == sections
 
 
+def test_mark_document_ready_sets_status_and_total_chunks(
+    db: sqlite3.Connection, doc_id: int
+) -> None:
+    from datetime import timedelta
+
+    from parsem.store.documents import mark_document_ready
+
+    later = T0 + timedelta(seconds=5)
+    mark_document_ready(db, doc_id, total_chunks=42, now=later)
+    doc = load_document(db, doc_id)
+    assert doc is not None
+    assert doc.status == "ready"
+    assert doc.total_chunks == 42
+    assert doc.failure_reason is None
+    assert doc.updated_at == later
+
+
+def test_mark_document_failed_sets_status_and_reason(db: sqlite3.Connection, doc_id: int) -> None:
+    from datetime import timedelta
+
+    from parsem.store.documents import mark_document_failed
+
+    later = T0 + timedelta(seconds=5)
+    mark_document_failed(db, doc_id, reason="Document is empty.", now=later)
+    doc = load_document(db, doc_id)
+    assert doc is not None
+    assert doc.status == "failed"
+    assert doc.failure_reason == "Document is empty."
+    assert doc.updated_at == later
+
+
+def test_mark_document_ready_clears_prior_failure_reason(
+    db: sqlite3.Connection, doc_id: int
+) -> None:
+    from datetime import timedelta
+
+    from parsem.store.documents import mark_document_failed, mark_document_ready
+
+    mark_document_failed(db, doc_id, reason="oops", now=T0 + timedelta(seconds=1))
+    mark_document_ready(db, doc_id, total_chunks=3, now=T0 + timedelta(seconds=2))
+    doc = load_document(db, doc_id)
+    assert doc is not None
+    assert doc.status == "ready"
+    assert doc.failure_reason is None
+
+
 def test_documents_module_does_not_import_from_web() -> None:
     import ast
 

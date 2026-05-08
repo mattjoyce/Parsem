@@ -1,17 +1,18 @@
-"""Phase 1 entry point. Spec: parsem-spec.md §25.1; bead Parsem-4bt.
+"""Phase 2 entry point. Spec: parsem-spec.md §17.1, §25.1; beads Parsem-4bt, Parsem-cwj.
 
-`build_app()` is pure construction — loads the bundled welcome corpus from
-disk, runs the chunker, builds ReaderState, and returns a FastAPI app.
-Tests target it directly via TestClient. `main()` is the process
-orchestrator that hands the built app to uvicorn.
+`build_app()` connects to the file-backed `data/parsem.db`, migrates the
+schema, idempotently seeds the bundled welcome corpus, and returns a
+FastAPI app whose `app.state.reader` is opened on the welcome doc.
+Subsequent visits to `/documents/{id}/reader` switch the open doc.
 
-Default host is 127.0.0.1 to avoid the spec §23 footgun ("I-bound-to-
-0.0.0.0-by-accident"). Override the runner via the `_runner` kwarg in
-tests so no port is opened.
+Tests target a separate construction path via `tests/web/conftest.py`
+that uses `:memory:` to keep the suite isolated and fast — production
+ownership of the DB lives here.
 """
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,43 +21,41 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI
 
-from parsem.domain.bucket import BucketConfig
 from parsem.domain.chunking import ChunkingConfig, chunk
 from parsem.parse.markdown_parse import parse
 from parsem.store.db import connect, migrate
 from parsem.store.documents import insert_chunks_and_sections, insert_document
-from parsem.store.projections_cache import (
-    initial_reader_positions,
-    load_pins_for_document,
-    make_event_log,
-)
 from parsem.web.app import create_app
-from parsem.web.state import ReaderState
+from parsem.web.state import build_reader_state_for_document
 
 # Spec §20: resume.warm_chunks default. Phase 2 settings.py will read
 # this from the settings table; until then it's a module-level default.
 RESUME_WARM_CHUNKS_DEFAULT = 2
 
-_WELCOME = Path(__file__).resolve().parents[1] / "data" / "welcome.md"
+_PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = _PROJECT_ROOT / "data"
+DEFAULT_DB_PATH = DATA_DIR / "parsem.db"
+ORIGINALS_DIR = DATA_DIR / "originals"
+WELCOME_PATH = DATA_DIR / "welcome.md"
+WELCOME_ORIGINAL_PATH = "data/welcome.md"  # idempotency key in documents.original_path
 
 
-def build_app() -> FastAPI:
-    """Load the welcome corpus, chunk it, and return the configured app.
-
-    Phase 1.5 wiring (Parsem-v5l): runs against an in-memory SQLite for
-    now. The EventLog is SQLite-backed; chunks and sections are seeded
-    so FK constraints hold. Phase 2's library/upload beads will replace
-    this with a file-backed DB and on-startup migration.
-    """
-    text = _WELCOME.read_text(encoding="utf-8")
+def _ensure_welcome_seeded(conn: sqlite3.Connection) -> int:
+    """Insert the welcome doc on first boot; return its id either way.
+    Idempotency key is `documents.original_path == 'data/welcome.md'`."""
+    row = conn.execute(
+        "SELECT id FROM documents WHERE original_path=?",
+        (WELCOME_ORIGINAL_PATH,),
+    ).fetchone()
+    if row is not None:
+        return int(row["id"])
+    text = WELCOME_PATH.read_text(encoding="utf-8")
     output = chunk(parse(text), ChunkingConfig())
     now = datetime.now(UTC)
-    conn = connect(":memory:")
-    migrate(conn)
     document_id = insert_document(
         conn,
         title="welcome",
-        original_path="data/welcome.md",
+        original_path=WELCOME_ORIGINAL_PATH,
         status="ready",
         total_chunks=len(output.chunks),
         now=now,
@@ -68,20 +67,24 @@ def build_app() -> FastAPI:
         sections=output.sections,
         now=now,
     )
-    current, high_water = initial_reader_positions(
-        conn, document_id, warm_chunks=RESUME_WARM_CHUNKS_DEFAULT
+    return document_id
+
+
+def build_app(db_path: Path | str | None = None) -> FastAPI:
+    """Build the FastAPI app against the file-backed DB at `db_path`.
+    Default is `DEFAULT_DB_PATH` resolved at call time so tests can
+    monkey-patch the module-level constants for isolation."""
+    resolved_db = Path(db_path) if db_path is not None else DEFAULT_DB_PATH
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    ORIGINALS_DIR.mkdir(parents=True, exist_ok=True)
+    conn = connect(resolved_db)
+    migrate(conn)
+    welcome_id = _ensure_welcome_seeded(conn)
+    state = build_reader_state_for_document(
+        conn, welcome_id, warm_chunks=RESUME_WARM_CHUNKS_DEFAULT
     )
-    state = ReaderState(
-        chunks=output.chunks,
-        sections=output.sections,
-        event_log=make_event_log(conn),
-        bucket_config=BucketConfig(),
-        pin_colors=load_pins_for_document(conn, document_id),
-        document_id=document_id,
-        current_position=current,
-        high_water_position=high_water,
-    )
-    return create_app(state)
+    assert state is not None  # welcome doc was just seeded; must exist
+    return create_app(state, db=conn, originals_dir=ORIGINALS_DIR)
 
 
 def main(

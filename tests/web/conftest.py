@@ -1,7 +1,8 @@
-"""Web-test fixtures. Builds a fresh ReaderState + TestClient per test."""
+"""Web-test fixtures. Builds a fresh DB + ReaderState + TestClient per test."""
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -9,36 +10,25 @@ import pytest
 from fastapi.testclient import TestClient
 
 from parsem.cli import RESUME_WARM_CHUNKS_DEFAULT
-from parsem.domain.bucket import BucketConfig
 from parsem.domain.chunking import ChunkingConfig, chunk
 from parsem.parse.markdown_parse import parse
 from parsem.store.db import connect, migrate
 from parsem.store.documents import insert_chunks_and_sections, insert_document
-from parsem.store.projections_cache import (
-    initial_reader_positions,
-    load_pins_for_document,
-    make_event_log,
-)
 from parsem.web.app import create_app
-from parsem.web.state import ReaderState
+from parsem.web.state import ReaderState, build_reader_state_for_document
 from tests.conftest import T0
 
 WELCOME = Path(__file__).resolve().parents[2] / "data" / "welcome.md"
 
 
 @pytest.fixture
-def state() -> ReaderState:
-    """Fresh ReaderState anchored at T0; tests reassign `clock` to bump time.
-
-    Phase 2 (Parsem-v5l): the EventLog is SQLite-backed, so the fixture
-    opens an in-memory SQLite, migrates, and seeds the welcome document
-    + its chunks + sections. The FK from reading_events.document_id to
-    documents.id is then satisfied for every event the routes emit.
-    """
-    blocks = parse(WELCOME.read_text(encoding="utf-8"))
-    output = chunk(blocks, ChunkingConfig())
+def db() -> sqlite3.Connection:
+    """In-memory SQLite seeded with the welcome doc + chunks + sections.
+    document_id 1 is the welcome doc."""
     conn = connect(":memory:")
     migrate(conn)
+    blocks = parse(WELCOME.read_text(encoding="utf-8"))
+    output = chunk(blocks, ChunkingConfig())
     document_id = insert_document(
         conn,
         title="welcome",
@@ -54,25 +44,25 @@ def state() -> ReaderState:
         sections=output.sections,
         now=T0,
     )
-    current, high_water = initial_reader_positions(
-        conn, document_id, warm_chunks=RESUME_WARM_CHUNKS_DEFAULT
-    )
-    return ReaderState(
-        chunks=output.chunks,
-        sections=output.sections,
-        event_log=make_event_log(conn),
-        bucket_config=BucketConfig(),
-        pin_colors=load_pins_for_document(conn, document_id),
-        document_id=document_id,
-        current_position=current,
-        high_water_position=high_water,
-        clock=lambda: T0,
-    )
+    return conn
 
 
 @pytest.fixture
-def client(state: ReaderState) -> Iterator[TestClient]:
-    app = create_app(state)
+def state(db: sqlite3.Connection) -> ReaderState:
+    """ReaderState opened on the welcome doc (id=1), clock pinned to T0."""
+    state = build_reader_state_for_document(
+        db, document_id=1, warm_chunks=RESUME_WARM_CHUNKS_DEFAULT
+    )
+    assert state is not None
+    state.clock = lambda: T0
+    return state
+
+
+@pytest.fixture
+def client(
+    state: ReaderState, db: sqlite3.Connection, tmp_path: Path
+) -> Iterator[TestClient]:
+    app = create_app(state, db=db, originals_dir=tmp_path / "originals")
     with TestClient(app) as c:
         yield c
 

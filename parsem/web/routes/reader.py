@@ -13,8 +13,13 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from parsem.domain.economy import cycle_pin, try_reveal
-from parsem.web.state import ReaderState
+from parsem.web.state import ReaderState, build_reader_state_for_document
 from parsem.web.view import build_reader_context
+
+# Spec §20: resume.warm_chunks default. Mirrored here so the GET
+# handler can swap in a freshly-loaded ReaderState without depending
+# on parsem.cli (would create an import cycle).
+_RESUME_WARM_CHUNKS_DEFAULT = 2
 
 
 class RateBody(BaseModel):
@@ -42,9 +47,29 @@ def _render_partial(request: Request, state: ReaderState) -> HTMLResponse:
     return templates.TemplateResponse(request, "_reader_main.html", build_reader_context(state))
 
 
-@router.get("/reader", response_class=HTMLResponse)
-def get_reader(request: Request) -> HTMLResponse:
-    return _render_full(request, _state(request))
+@router.get("/documents/{document_id}/reader", response_class=HTMLResponse)
+def get_document_reader(document_id: int, request: Request) -> HTMLResponse:
+    """Open the requested document. If `app.state.reader` is already
+    on this doc, render with the in-memory state (preserves session
+    fields like `last_active_pin_color`); otherwise rebuild from DB
+    and swap. 404 when the doc does not exist.
+
+    Single-tab assumption: this swap is process-global. Two browser
+    tabs visiting different docs will silently overwrite each other's
+    `app.state.reader`. Multi-tab support is deferred to Parsem-2rp
+    (per-document POST routes + version polling)."""
+    state = _state(request)
+    if state.document_id != document_id:
+        new_state = build_reader_state_for_document(
+            request.app.state.db,
+            document_id,
+            warm_chunks=_RESUME_WARM_CHUNKS_DEFAULT,
+        )
+        if new_state is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+        request.app.state.reader = new_state
+        state = new_state
+    return _render_full(request, state)
 
 
 @router.post("/pin", response_class=HTMLResponse)

@@ -2,7 +2,12 @@
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
+*.db-wal
+*.db-shm
 .beads-credential-key
+
+# User-uploaded markdown originals (Parsem-cwj)
+data/originals/
 
 # Python
 __pycache__/
