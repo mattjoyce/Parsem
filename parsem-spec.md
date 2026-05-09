@@ -180,6 +180,93 @@ The rule applies only to action keys. Manual scroll (mouse wheel, Page Down) is 
 
 ---
 
+## 8a. Pointer Interactions
+
+Keyboard is the source of truth (§8). Pointer is the **review surface**: it lets the reader scrub backward, focus on prior text, and navigate among landmarks, but it cannot advance the reading. This section is the design contract for every individual mouse / touch surface in the reader, written before any of those surfaces ship so the surfaces stay coherent rather than accreting one click handler at a time (claude-axx.4).
+
+### 8a.1 Principle
+
+> **Pointer is for review *and* parallel-to-keyboard advance, but never bypasses friction. Forward motion costs a token whether the trigger is Space or the inline reveal symbol (§8a.4); the blurred preview remains preparation, not a target. Backward motion is free, as on the keyboard.**
+
+Four corollaries:
+
+- **Backward is free, forward costs a token.** The reading economy is the same whichever input drives it. Pointer doesn't introduce a discount.
+- **Aim — not input mode — preserves friction.** Both Space and the reveal symbol are small, deliberate targets. A 720px-wide blurred preview is a billboard; that's why it is *not* a click target. Pointer doesn't route around the friction; it offers a parallel surface that costs the same.
+- **Backward pointer navigation is undoable.** Every backward pointer move (chunk body click, progress-bar click) captures `pre_jump_position` so `'` (return) / Esc reach the reader's last keyboard-anchored position.
+- **Forward advance lands a new frontier, just like Space.** Clicking the reveal symbol mutates `high_water_position` and writes a `reveal` event (§18) — the same as keyboard reveal. There is no "soft advance via pointer."
+
+These imply two hard splits in pointer semantics. First, between clicking a chunk-shaped thing for review vs. clicking the inline symbol for advance:
+
+| Surface              | Effect on `current_position` | Cost  | Why                                                                                                                              |
+|----------------------|-------------------------------|-------|---------------------------------------------------------------------------------------------------------------------------------|
+| Pin dot (left gutter) | **No change** — scroll only   | Free  | Pins are landmarks. Jumping to a landmark is a viewing action, not a commitment to read from there. Matches `]` / `[` / `}` / `{` (§13.4). |
+| Chunk body (back-scrub) | **Sets `current_position` backward** | Free  | The reader is saying *"this is my place now."* Subsequent rate / pin / Space act on this chunk. Captured in `pre_jump_position` so a single keystroke restores the frontier. |
+| Reveal symbol (inline, end of current chunk) | **Advances `current_position` and `high_water_position` by 1** | **1 token** | The pointer-mode peer of Space — small target, deliberate aim, same cost, same event log. |
+
+Second, the blurred preview gutter is **not** a click target. The preview is preparation (§9.5); making it clickable would rewrite its meaning into "next button" and the eye would start scanning it for affordance instead of absorbing what's coming. Clicks on the preview are swallowed — the reader who wants to advance with the mouse uses the inline symbol.
+
+### 8a.2 Surfaces
+
+Each row is a future implementation bead. Every surface obeys the principle above.
+
+| Surface                                  | On click                                                                                                                                                              | Token   | Status / bead                |
+|------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------|------------------------------|
+| **Reveal symbol** (inline, end of current chunk's last line) | Same code path as Space: `POST /reveal`. Bucket has tokens → advance one chunk, write a `reveal` event. Bucket empty → trigger the §12.5 rejection motion, no advance. | **1**   | reveal-symbol (next, see §8a.4) |
+| Chunk body (`.chunk` body, behind frontier) | Set `current_position := chunk.position`. Capture `pre_jump_position` if currently null. No-op when `position >= high_water_position`. No event log entry.            | Free    | claude-axx.3 (next)          |
+| Pin dot (left gutter, settled)           | Smooth-scroll the chunk into the canonical 70% anchor. No state change. No event.                                                                                      | Free    | claude-axx.4-pindot (future) |
+| Section heading sticky line (top bar)    | Smooth-scroll the section's first chunk into view. No state change.                                                                                                    | Free    | claude-axx.4-section (future)|
+| Progress bar (top bar)                   | Click maps to a position; clamps to `[0, high_water_position]`; sets `current_position` and captures `pre_jump_position`. Forward of the frontier is rejected silently.| Free    | claude-axx.4-progress (future)|
+| Drag-select inside a chunk               | Begin a future word-level pin span (§13.1). MVP: unbound — drag-select still does native browser text selection, no Parsem behaviour attached.                          | Free    | post-MVP                     |
+| Right-click context menu                 | Reserved. Browser default for now.                                                                                                                                     | —       | post-MVP                     |
+| Preview gutter (the blurred next chunk) **NOT** clickable | Click is swallowed. The preview is preparation (§9.5), not a button — making the 720px-wide blurred region clickable would defeat the deliberate-aim principle. The reveal symbol exists for pointer-driven advance. | —       | n/a                          |
+| Rating bar `1 · 2 · 3 · 4 · 5`           | Out of scope for the pointer model — keyboard-only in MVP per §7.4. Future bead may make digits clickable; would obey the same principle (free, never advancing past the frontier).        | Free    | post-MVP                     |
+
+### 8a.3 Cross-cutting decisions
+
+**`pre_jump_position` capture.** Any pointer surface that mutates `current_position` (chunk body click, progress bar click) writes the *prior* `current_position` to `pre_jump_position` if and only if `pre_jump_position` is null. This composes with the existing `'` / Esc return rule (§8.1, §13.4): one return-keystroke always lands on the last keyboard-anchored position, regardless of how many pointer hops happened in between. Pointer surfaces that only scroll (pin dot, section heading) do **not** touch `pre_jump_position` — the spine has not moved.
+
+**Cursor affordance.** The browser cursor signals what the surface will do:
+- `cursor: pointer` on settled chunks behind `high_water_position` (clickable to set-current)
+- `cursor: pointer` on pin dots, section heading line, progress bar
+- `cursor: default` on the current chunk and the preview gutter (no forward navigation)
+- `cursor: text` on chunk body during drag (so native selection still feels normal)
+
+**Selection vs. click disambiguation.** A `click` event with no intervening `mousemove` (or movement < 4px) and `mouseup` within 250ms of `mousedown` is a "set-current" click. Anything longer or with movement is a text selection — Parsem does nothing, the browser keeps its native selection. This matters for the future word-level pin span (post-MVP); for now it just keeps copy/paste from feeling broken.
+
+**Return-first does not apply to pointer.** §8.1's return-first rule fires when an *action key* is pressed while the reader is scrolled away — to prevent accidental reveal at the wrong place. A pointer click is itself an explicit attention signal: the user has aimed at a target. Pointer clicks therefore execute their action regardless of scroll position. Manual scroll remains sovereign (§8.1 final clause).
+
+**Touch parity.** Tap == click. Long-press, two-finger gestures, and pinch-zoom are out of scope; the browser default applies.
+
+**Mobile / small-screen.** Phone breakpoint UX is its own design problem and is explicitly not covered here. The principle above will hold; the surfaces will not be a 1:1 port.
+
+**No event-log entries for pointer navigation.** Pointer surfaces that only scroll, and pointer surfaces that only move `current_position` backward, do not write to the event log (§18). They change view, not history. Only token-spending and rating / pin actions log events. This keeps event-log replay deterministic — replaying all events of a session reproduces the reader's *reading*, not their *eye movement*.
+
+**Reverse migration.** If a future bead decides any of these surfaces should change the *cost* of any pointer surface (e.g. make backward navigation cost a token, or add a second forward-advance surface), that change overrides §8a.1 and must edit this section first. The principle is the gate.
+
+### 8a.4 Reveal symbol
+
+The reveal symbol is the pointer-mode peer of Space. It is intentionally small and intentionally placed inline so the reader's eye encounters it at exactly the moment they finish the current chunk.
+
+**Placement.** A small glyph appears immediately after the last character of the current chunk's last line, in the text flow itself — *not* on a separate line, not in a gutter. Whitespace between the last word and the symbol is one rendered space. When the chunk's last block is a list / code block / table / blockquote / horizontal rule, the symbol still hangs off the chunk's natural reading endpoint (the last character of the last visible text line of that block). For a horizontal-rule chunk (which has no prose text), the symbol renders centred on the rule line.
+
+**Glyph.** Use a single right-pointing glyph. Defaults: `»` or `▸`. The glyph is muted by default (~50% of body ink) so it disappears into the typography for keyboard-only readers; it brightens to body ink on `:hover`. The exact glyph is an implementation choice, not a spec commitment — but it is a single character, never a button-shaped element.
+
+**Visibility states.**
+
+| Bucket state | Symbol appearance                                  | On click                                              |
+|--------------|-----------------------------------------------------|-------------------------------------------------------|
+| Has tokens   | Muted ink at rest; body ink on hover; `cursor: pointer` | `POST /reveal` — same handler as Space (§7.1, §12.3)  |
+| Empty bucket | Ghosted (~25% ink), no hover brighten, `cursor: not-allowed` | Triggers the §12.5 rejection motion (column shake + amber pulse) and the empty-bucket pictograph; does not advance. The token pictograph is the canonical empty-bucket signal — the symbol echoes it locally. |
+| End of document (no next chunk) | Hidden entirely | n/a — reading is over; no advance affordance |
+
+**Why the symbol echoes the keyboard exactly.** Click and Space share the same server endpoint, the same event log entry, the same rejection motion, the same warm-restore semantics. The reader's mental model is *"there are two ways to commit a reveal, and they cost the same."* That symmetry keeps the keyboard authoritative (§8) — the symbol is just a second instrument playing the same note.
+
+**No advance preview by hover.** Hovering the symbol does *not* lift the preview's blur. Lifting blur is the consequence of *committing* a reveal, not of intending to. This preserves the preview's "preparation, not tease" meaning.
+
+**Discoverability.** The symbol is the only on-screen affordance signalling that pointer-driven advance exists. Tooltips and onboarding labels are out of scope here; if discoverability proves a problem in UAT, a one-time tooltip can land in a follow-up.
+
+---
+
 ## 9. Reader Experience
 
 ### 9.1 Library view
