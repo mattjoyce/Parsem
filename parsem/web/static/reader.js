@@ -313,17 +313,20 @@
     // the reader has scrolled to see the chunk they're clicking on,
     // which is precisely the case the surface is built for.
     //
-    // settle: false — the user is already looking at the clicked chunk;
-    // forcing it to the 70% anchor would yank the viewport away from
-    // where the user just aimed.
-    performAction(
-      {
-        method: "POST",
-        url: "/set-current-position",
-        body: { position },
-      },
-      { settle: false },
-    );
+    // settle: true — let the clicked chunk slide to the canonical
+    // 70% anchor on a smooth-scroll. The earlier "leave the viewport
+    // alone" instinct was wrong: if click doesn't settle, every
+    // subsequent action key (p, 1-5, Space) trips the §8.1
+    // return-first guard and the user has to press twice. Settling
+    // on click means click → p just pins; click → Space just resumes;
+    // click → 1 just rates. The small visual slide of the clicked
+    // chunk to 70% reads as "the system has registered I am here"
+    // rather than as a yank.
+    performAction({
+      method: "POST",
+      url: "/set-current-position",
+      body: { position },
+    });
   });
 
   // Initial anchor on page load. requestAnimationFrame ensures layout has
