@@ -150,14 +150,21 @@
     );
   }
 
-  async function dispatch(action) {
-    // Return-first rule (§8.1): if the reader has scrolled away from
-    // canonical, the first key press only re-anchors. Second press will
-    // hit a now-canonical state and the action proceeds.
-    if (!isAtCanonical()) {
-      settleAtCurrent({ behavior: "smooth" });
-      return;
-    }
+  // Send the request, apply the response, optionally settle. Used by
+  // both keyboard and pointer paths. Keyboard wraps this with a
+  // return-first guard (§8.1); pointer calls it directly because §8a.3
+  // says return-first does NOT apply to pointer.
+  //
+  // settle controls whether the viewport scrolls so .chunk--current
+  // lands at the 70% anchor:
+  //   true  (default)  — keyboard advance / conceal / pin-jump / Space-
+  //                      resume all want this, the eye is following
+  //                      the cursor.
+  //   false            — chunk-body click. The user is already looking
+  //                      at the chunk they clicked; auto-scrolling it
+  //                      to 70% would yank the page out from under
+  //                      them. They can press `'` to settle later.
+  async function performAction(action, { settle = true } = {}) {
     const opts = { method: action.method, headers: {} };
     if (action.body !== undefined) {
       opts.headers["Content-Type"] = "application/json";
@@ -177,7 +184,19 @@
 
     const html = await response.text();
     applyResponseFragment(html);
-    settleAtCurrent({ behavior: "smooth" });
+    if (settle) settleAtCurrent({ behavior: "smooth" });
+  }
+
+  // Keyboard dispatch — return-first guards every action key (§8.1).
+  // When the reader has scrolled away from the canonical anchor, the
+  // first key press re-anchors and bows out; the second press hits a
+  // now-canonical state and the request proceeds.
+  async function dispatch(action) {
+    if (!isAtCanonical()) {
+      settleAtCurrent({ behavior: "smooth" });
+      return;
+    }
+    await performAction(action);
   }
 
   function isTypingTarget(el) {
@@ -288,11 +307,23 @@
     if (position > highWater) return;
     if (position === current) return;
     event.preventDefault();
-    dispatch({
-      method: "POST",
-      url: "/set-current-position",
-      body: { position },
-    });
+    // performAction, not dispatch — clicks bypass return-first per
+    // spec §8a.3. The click is itself an explicit attention signal;
+    // gating on isAtCanonical would silently eat the click whenever
+    // the reader has scrolled to see the chunk they're clicking on,
+    // which is precisely the case the surface is built for.
+    //
+    // settle: false — the user is already looking at the clicked chunk;
+    // forcing it to the 70% anchor would yank the viewport away from
+    // where the user just aimed.
+    performAction(
+      {
+        method: "POST",
+        url: "/set-current-position",
+        body: { position },
+      },
+      { settle: false },
+    );
   });
 
   // Initial anchor on page load. requestAnimationFrame ensures layout has
