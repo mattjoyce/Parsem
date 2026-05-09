@@ -90,6 +90,16 @@ def test_reader_js_binds_chunk_body_click(reader_js_source: str) -> None:
     assert ".chunk" in reader_js_source
 
 
+def test_reader_js_binds_reveal_symbol_click(reader_js_source: str) -> None:
+    """claude-axx.8 / spec §8a.4 — clicking the inline » triggers
+    /reveal (pointer-mode peer of Space). Empty-bucket variant plays
+    the rejection motion locally without a round trip."""
+    assert "reveal-symbol" in reader_js_source
+    assert "reveal-symbol--empty" in reader_js_source
+    assert "/reveal" in reader_js_source
+    assert "playRejection" in reader_js_source
+
+
 def test_reader_js_handles_rating_key_toggle(reader_js_source: str) -> None:
     """claude-axx.3 UAT — keyboard 1-5 is toggle-aware: pressing N
     when the chunk's rating is already N clears (POST /unrate),

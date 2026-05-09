@@ -39,7 +39,16 @@
           as a vertical 1/2/3/4/5 stack — out of the reading flow
           but spatially coupled to the chunk it rates. The buttons
           are clickable as a free, non-advancing pointer surface
-          per §8a.1. #}{% if entry.chunk.position == current_position %}<nav class="rating-prompt" aria-label="Rate effort">
+          per §8a.1. #}{# Inline reveal symbol (spec §8a.4, claude-axx.8) — pointer-mode
+          peer of Space. Sits at the end of the current chunk's text
+          flow. Hidden on the end-of-document chunk (no next_chunk).
+          Ghosted when bucket is empty so the click triggers the §12.5
+          rejection motion via JS instead of advancing. #}{% if entry.chunk.position == current_position and next_chunk %}<button
+            type="button"
+            class="reveal-symbol{% if bucket_empty %} reveal-symbol--empty{% endif %}"
+            aria-label="Reveal next chunk"
+            {% if bucket_empty %}aria-disabled="true"{% endif %}
+          >&#187;</button>{% endif %}{% if entry.chunk.position == current_position %}<nav class="rating-prompt" aria-label="Rate effort">
             {% for r in [1, 2, 3, 4, 5] %}
             <button type="button"
               class="rating-dot{% if current_chunk_rating and r <= current_chunk_rating %} rating-dot--filled{% endif %}{% if current_chunk_rating == r %} rating-dot--active{% endif %}"

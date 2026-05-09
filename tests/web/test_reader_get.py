@@ -220,6 +220,43 @@ def test_reader_after_click_back_preview_targets_post_high_water(
     assert 'data-chunk-position="8"' in response.text
 
 
+def test_reader_renders_reveal_symbol_at_current_chunk(
+    client: TestClient, state: ReaderState
+) -> None:
+    """Inline reveal symbol (§8a.4, claude-axx.8) — pointer-mode peer
+    of Space. Renders inside the current chunk when there's a chunk
+    past the frontier to advance into."""
+    state.high_water_position = 2
+    state.current_position = 2
+    response = client.get("/documents/1/reader")
+    assert "reveal-symbol" in response.text
+    assert "&#187;" in response.text or "»" in response.text
+
+
+def test_reader_omits_reveal_symbol_at_end_of_document(
+    client: TestClient, state: ReaderState
+) -> None:
+    """Last chunk has no next_chunk — reveal symbol should hide
+    entirely so the reader knows reading is over."""
+    state.high_water_position = len(state.chunks) - 1
+    state.current_position = len(state.chunks) - 1
+    response = client.get("/documents/1/reader")
+    assert "reveal-symbol" not in response.text
+
+
+def test_reader_reveal_symbol_empty_class_when_bucket_drained(
+    client: TestClient, state: ReaderState
+) -> None:
+    """Empty-bucket: symbol renders with --empty modifier so CSS
+    ghosts it and JS swaps the click handler to play the rejection
+    motion instead of POSTing /reveal."""
+    from tests.web.conftest import exhaust_bucket
+
+    exhaust_bucket(client, state)
+    response = client.get("/documents/1/reader")
+    assert "reveal-symbol--empty" in response.text
+
+
 def test_reader_renders_rating_bar_for_rated_chunk(
     client: TestClient, state: ReaderState
 ) -> None:

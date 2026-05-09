@@ -326,6 +326,25 @@
     mouseDownT = Date.now();
   });
   document.addEventListener("click", (event) => {
+    // Reveal symbol click — pointer-mode peer of Space (§8a.4,
+    // claude-axx.8). Same code path as Space: same /reveal endpoint,
+    // same X-Reveal-Outcome header drives the rejection motion when
+    // the bucket is empty. Bypasses the §8.1 return-first guard per
+    // §8a.3 — a click is the explicit attention signal.
+    const revealSymbol = event.target.closest(".reveal-symbol");
+    if (revealSymbol) {
+      event.preventDefault();
+      // Empty-bucket: skip the round trip and play rejection locally.
+      // The CSS marker drives this; the server would return
+      // X-Reveal-Outcome: bucket_empty either way, but doing it
+      // client-side keeps the visual instant and avoids a flicker.
+      if (revealSymbol.classList.contains("reveal-symbol--empty")) {
+        playRejection();
+        return;
+      }
+      performAction({ method: "POST", url: "/reveal" });
+      return;
+    }
     // Rating dot click — pointer-mode peer of the 1-5 keypress
     // (§8a.1, claude-axx.3 UAT). Free, never advances. Bypasses
     // return-first per §8a.3 (a click is itself the attention

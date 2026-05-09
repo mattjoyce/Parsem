@@ -156,6 +156,10 @@ def build_reader_context(state: ReaderState) -> dict[str, Any]:
         else None
     )
     filled = tokens_now(state.paid_reveal_times, state.bucket_config, state.clock())
+    # Bucket-empty drives the reveal symbol's ghosted state (§8a.4) — when
+    # the bucket has no tokens, clicking the inline » triggers the §12.5
+    # rejection motion instead of advancing.
+    bucket_empty = filled == 0
     progress_current = state.current_position + 1
     progress_total = len(state.chunks)
     return {
@@ -178,4 +182,5 @@ def build_reader_context(state: ReaderState) -> dict[str, Any]:
         ),
         "regen_seconds": state.bucket_config.regen_seconds,
         "next_chunk": upcoming_visible,
+        "bucket_empty": bucket_empty,
     }

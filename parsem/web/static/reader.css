@@ -354,6 +354,32 @@ body {
 }
 .rating-dot:hover { background: rgba(0, 0, 0, 0.25); }
 .rating-dot--filled { background: currentColor; }
+/* Inline reveal symbol (spec §8a.4, claude-axx.8) — pointer-mode
+ * peer of Space. Sits inline at the end of the current chunk's
+ * last line so the eye encounters it at the natural reading
+ * endpoint. Muted at rest (~50% body ink) so keyboard-only readers
+ * don't notice it; brightens to body ink on hover. Click triggers
+ * the same /reveal endpoint as Space. */
+.reveal-symbol {
+  background: transparent;
+  border: 0;
+  padding: 0 0 0 0.25em;
+  font: inherit;
+  color: inherit;
+  opacity: 0.45;
+  cursor: pointer;
+  transition: opacity 120ms ease;
+  vertical-align: baseline;
+}
+.reveal-symbol:hover { opacity: 0.95; }
+/* Empty-bucket state — ghosted, click triggers rejection motion
+ * via JS rather than advancing (mirrors the §12.5 keyboard motion). */
+.reveal-symbol--empty {
+  opacity: 0.2;
+  cursor: not-allowed;
+}
+.reveal-symbol--empty:hover { opacity: 0.2; }
+
 /* Per-chunk rating bar (spec §14.3, claude-yda) — subtle horizontal
  * stripe at the chunk's bottom edge, tinted by the latest rating.
  * Heatmap palette per spec §9.1: blue (1-2), neutral (3), amber (4),
