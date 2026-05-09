@@ -6,12 +6,14 @@
   --column-max: 720px;
   --gutter: 16px;
   /* Right gutter is wider than left because it carries the rating
-   * prompt's vertical 1/2/3/4/5 stack (claude-axx.3 UAT, spec §9.5).
-   * 28px is just enough for legible digits at the prompt's reduced
-   * size; the visual frame still reads as a thin gutter, not a
+   * prompt's vertical dot stack (claude-axx.3 UAT, spec §9.5) AND
+   * has to leave room for the vertical scrollbar. 36px gives the
+   * dots a comfortable spot well clear of the scrollbar even on
+   * browsers that ignore scrollbar-gutter: stable on .reader-
+   * scroll. The visual frame still reads as a thin gutter, not a
    * sidebar. Kept asymmetric on purpose — the left gutter is just
    * pin dots and stays minimal. */
-  --gutter-right: 28px;
+  --gutter-right: 36px;
   --top-bar-height: 64px;
   --regen-seconds: 12s;
   /* Distinct from --pin-1 (#E4B363) so the rejection signal can't be
@@ -136,13 +138,21 @@ body {
   position: relative;
   overflow-y: auto;
   overflow-x: hidden;
-  /* scrollbar-gutter: stable reserves the scrollbar's column on the
-   * right of .reader-scroll always — present whether or not the
-   * scrollbar is visible. Without this, the scrollbar lands on top
-   * of the right gutter's rating digits (claude-axx.3 UAT). With
-   * stable, the layout's right edge is to the LEFT of the scrollbar
-   * gutter, so digits and scrollbar can't overlap. */
+  /* Two-pronged scrollbar handling for the right-gutter rating dots
+   * (claude-axx.3 UAT — first pass with just scrollbar-gutter still
+   * showed scrollbar-over-dots overlap on at least one browser):
+   *
+   * 1. scrollbar-gutter: stable reserves the scrollbar's column on
+   *    the right of .reader-scroll always, present whether or not
+   *    the scrollbar is visible. On honoring browsers the scrollbar
+   *    lives OUTSIDE the layout grid entirely.
+   * 2. scrollbar-width: thin shrinks the scrollbar (~6-8px). On any
+   *    browser that ignores scrollbar-gutter, the thinner scrollbar
+   *    still has plenty of clearance from the dot stack (which now
+   *    sits ~16px inside the layout's right edge — see .rating-
+   *    prompt). Belt + suspenders. */
   scrollbar-gutter: stable;
+  scrollbar-width: thin;
 }
 
 .layout {
@@ -303,7 +313,11 @@ body {
  */
 .rating-prompt {
   position: absolute;
-  right: calc(-1 * var(--gutter-right) + 4px);
+  /* Sits inside the right gutter, ~20px past the chunk's right edge,
+   * leaving ~16px of clearance to the layout's right edge so the
+   * vertical scrollbar (in reserved gutter or at content-box right
+   * edge, depending on browser) can never overlap the dots. */
+  right: calc(-1 * var(--gutter-right) + 16px);
   bottom: 0;
   display: flex;
   /* column-reverse so the dot for rating 1 sits at the BOTTOM, with
