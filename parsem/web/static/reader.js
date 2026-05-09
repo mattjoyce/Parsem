@@ -285,20 +285,23 @@
     mouseDownT = Date.now();
   });
   document.addEventListener("click", (event) => {
-    // Rating button click — pointer-mode peer of the 1-5 keypress
+    // Rating dot click — pointer-mode peer of the 1-5 keypress
     // (§8a.1, claude-axx.3 UAT). Free, never advances. Bypasses
     // return-first per §8a.3 (a click is itself the attention
-    // signal). settle defaults to true so the next Space press
-    // doesn't get eaten by §8.1 return-first when the rating click
-    // happens slightly off-canonical — a no-op when already at
-    // canonical, a tiny smooth-scroll otherwise.
-    const ratingButton = event.target.closest(".rating-button");
-    if (ratingButton) {
-      const rating = parseInt(ratingButton.dataset.rating, 10);
-      if (!Number.isNaN(rating)) {
-        event.preventDefault();
-        performAction({ method: "POST", url: "/rate", body: { rating } });
-      }
+    // signal). Toggle: clicking the filled dot clears the rating
+    // (POSTs /unrate); clicking any other dot sets the rating
+    // (POSTs /rate). Server is single source of truth — JS reads
+    // data-active from the just-served partial.
+    const ratingDot = event.target.closest(".rating-dot");
+    if (ratingDot) {
+      event.preventDefault();
+      const rating = parseInt(ratingDot.dataset.rating, 10);
+      if (Number.isNaN(rating)) return;
+      const isActive = ratingDot.dataset.active === "true";
+      const action = isActive
+        ? { method: "POST", url: "/unrate" }
+        : { method: "POST", url: "/rate", body: { rating } };
+      performAction(action);
       return;
     }
     // Skip clicks on other internal interactive controls — they

@@ -254,6 +254,27 @@ def post_rate(request: Request, body: RateBody) -> HTMLResponse:
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    state.chunk_ratings[state.current_position] = body.rating
+    return _render_partial(request, state)
+
+
+@router.post("/unrate", response_class=HTMLResponse)
+def post_unrate(request: Request) -> HTMLResponse:
+    """Clear the current chunk's rating. Mirrors `pin_clear`. Logs a
+    `rate_clear` event so projection rebuild reproduces the wiped
+    state. No-op when the chunk has no rating to clear (claude-axx.3
+    UAT — clicking an empty rating dot must not log spurious events).
+    """
+    state = _state(request)
+    chunk_id = state.current_position
+    if chunk_id not in state.chunk_ratings:
+        return _render_partial(request, state)
+    state.event_log.rate_clear(
+        document_id=state.document_id,
+        chunk_id=chunk_id,
+        created_at=state.clock(),
+    )
+    del state.chunk_ratings[chunk_id]
     return _render_partial(request, state)
 
 

@@ -96,12 +96,20 @@ def apply_rating_event(
 ) -> dict[int, int]:
     """Latest-wins fold of one event into a position→rating dict.
 
-    Ignores any event type that isn't `rate_effort`. Event ids are
-    monotonic via AUTOINCREMENT, so plain dict overwrite gives the
-    latest-rating-wins semantics §21 requires.
+    `rate_effort` sets/overwrites; `rate_clear` removes; everything else
+    is a no-op. Event ids are monotonic via AUTOINCREMENT, so plain
+    dict overwrite gives the latest-wins semantics §21 requires.
     """
+    if event.chunk_id is None:
+        return ratings
+    if event.event_type == "rate_clear":
+        if event.chunk_id not in ratings:
+            return ratings
+        next_ratings = dict(ratings)
+        del next_ratings[event.chunk_id]
+        return next_ratings
     rating = rate_effort_rating(event)
-    if rating is None or event.chunk_id is None:
+    if rating is None:
         return ratings
     return {**ratings, event.chunk_id: rating}
 

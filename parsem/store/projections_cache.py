@@ -126,12 +126,22 @@ def _write_reading_state(conn: sqlite3.Connection, state: ReadingState) -> None:
 def apply_to_chunk_ratings(
     conn: sqlite3.Connection, event: ReadingEvent
 ) -> None:
-    """UPSERT one rate_effort event into chunk_ratings. No-op for any
-    other event type. Resolves the event's POSITION-keyed chunk_id to
-    the chunks.id row; silently skips if no such chunk exists (drift
-    guard). Does NOT commit."""
+    """Persist one rate_effort or rate_clear event into chunk_ratings.
+    Resolves the event's POSITION-keyed chunk_id to the chunks.id row;
+    silently skips if no such chunk exists (drift guard). Does NOT
+    commit."""
+    if event.chunk_id is None:
+        return
+    if event.event_type == "rate_clear":
+        chunk_db_id = _resolve_chunk_id(conn, event.document_id, event.chunk_id)
+        if chunk_db_id is None:
+            return
+        conn.execute(
+            "DELETE FROM chunk_ratings WHERE chunk_id=?", (chunk_db_id,)
+        )
+        return
     rating = rate_effort_rating(event)
-    if rating is None or event.chunk_id is None:
+    if rating is None:
         return
     chunk_db_id = _resolve_chunk_id(conn, event.document_id, event.chunk_id)
     if chunk_db_id is None:

@@ -316,20 +316,35 @@ body {
   user-select: none;
 }
 .rating-prompt:hover { opacity: 0.9; }
-.rating-button {
-  background: none;
-  border: none;
+/* Rating dots — five hollow circles in vertical stack. The dot at
+ * the current chunk's rating is filled; clicking a hollow one sets
+ * the rating, clicking the filled one clears it (claude-axx.3 UAT
+ * dot-toggle UX). Keyboard 1–5 keeps "set only" semantics — the
+ * toggle-to-clear lives on the click surface (§7.4 + §8a.1). */
+.rating-dot {
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  width: 8px;
+  height: 8px;
   padding: 0;
   margin: 0;
-  font: inherit;
   cursor: pointer;
   color: inherit;
-  width: 1.4em;
-  text-align: center;
-  border-radius: 2px;
-  transition: color 120ms ease, background 120ms ease;
+  transition: background 120ms ease, transform 100ms ease;
 }
-.rating-button:hover { color: var(--reject-color); }
+.rating-dot:hover { background: rgba(0, 0, 0, 0.15); }
+.rating-dot--active {
+  background: currentColor;
+  /* Active dot reads as a filled marker; the column has a global
+   * 0.4 opacity at rest, so the "filled" looks subdued. Hovering
+   * the prompt brings it to 0.9 so the active dot becomes vivid. */
+}
+.rating-dot--active:hover {
+  /* Hover on the active dot signals "click again to clear." Faded
+   * to a hairline ring so the toggle-off affordance is visible. */
+  background: transparent;
+}
 
 .countdown { padding: 0.5em 0; opacity: 0.7; font-size: 0.9em; }
 .countdown-reminders { opacity: 0.6; font-size: 0.85em; margin-top: 0.2em; }

@@ -49,3 +49,59 @@ def test_rate_does_not_advance_position(client: TestClient, state: ReaderState) 
 def test_rate_returns_partial_fragment_not_full_page(client: TestClient) -> None:
     response = client.post("/rate", json={"rating": 3})
     assert response.text.lstrip().startswith("<main")
+
+
+def test_rate_updates_state_chunk_ratings(
+    client: TestClient, state: ReaderState
+) -> None:
+    """The dot-toggle UI relies on `state.chunk_ratings` being live —
+    the next render shows the active dot. The /rate route must keep
+    state in sync with the event log (claude-axx.3)."""
+    client.post("/rate", json={"rating": 4})
+    assert state.chunk_ratings[state.current_position] == 4
+
+
+def test_unrate_clears_an_existing_rating(
+    client: TestClient, state: ReaderState
+) -> None:
+    """Click on the filled rating dot routes here. Logs a rate_clear
+    event AND removes the entry from state.chunk_ratings."""
+    client.post("/rate", json={"rating": 4})
+    response = client.post("/unrate")
+    assert response.status_code == 200
+    assert state.current_position not in state.chunk_ratings
+
+
+def test_unrate_logs_rate_clear_event(
+    client: TestClient, state: ReaderState
+) -> None:
+    client.post("/rate", json={"rating": 4})
+    client.post("/unrate")
+    events = [
+        e
+        for e in state.event_log.events_for_document(state.document_id)
+        if e.event_type == "rate_clear"
+    ]
+    assert len(events) == 1
+    assert events[0].chunk_id == state.current_position
+
+
+def test_unrate_when_unrated_is_silent_noop(
+    client: TestClient, state: ReaderState
+) -> None:
+    """Defends against a stale-DOM click: if the dot looked active to
+    JS but the chunk had no rating server-side, /unrate must NOT log
+    a spurious rate_clear event."""
+    response = client.post("/unrate")
+    assert response.status_code == 200
+    events = [
+        e
+        for e in state.event_log.events_for_document(state.document_id)
+        if e.event_type == "rate_clear"
+    ]
+    assert events == []
+
+
+def test_unrate_returns_partial_fragment(client: TestClient) -> None:
+    response = client.post("/unrate")
+    assert response.text.lstrip().startswith("<main")

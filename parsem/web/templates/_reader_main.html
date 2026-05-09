@@ -41,7 +41,13 @@
           are clickable as a free, non-advancing pointer surface
           per §8a.1. #}{% if entry.chunk.position == current_position %}<nav class="rating-prompt" aria-label="Rate effort">
             {% for r in [1, 2, 3, 4, 5] %}
-            <button type="button" class="rating-button" data-rating="{{ r }}">{{ r }}</button>
+            <button type="button"
+              class="rating-dot{% if current_chunk_rating == r %} rating-dot--active{% endif %}"
+              data-rating="{{ r }}"
+              {% if current_chunk_rating == r %}data-active="true"{% endif %}
+              aria-label="Rate {{ r }}{% if current_chunk_rating == r %} (currently set; click to clear){% endif %}"
+              aria-pressed="{% if current_chunk_rating == r %}true{% else %}false{% endif %}"
+            ></button>
             {% endfor %}
           </nav>{% endif %}</article>
         {% endfor %}

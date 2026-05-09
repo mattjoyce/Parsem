@@ -31,6 +31,7 @@ from parsem.store.documents import (
 )
 from parsem.store.events import EventLog
 from parsem.store.projections_cache import (
+    get_ratings_for_document,
     initial_reader_positions,
     load_pins_for_document,
     make_event_log,
@@ -54,6 +55,11 @@ class ReaderState:
     paid_reveal_times: list[datetime] = field(default_factory=list)
     last_active_pin_color: int | None = None
     pre_jump_position: int | None = None
+    # position → latest rating (1..5). Empty for unrated chunks.
+    # Caller seeds via get_ratings_for_document; /rate and /unrate
+    # mutate this dict alongside the event log so the next render
+    # has the new state without re-querying the DB.
+    chunk_ratings: dict[int, int] = field(default_factory=dict)
     clock: Callable[[], datetime] = field(default=_utcnow)
 
 
@@ -91,6 +97,7 @@ def build_reader_state_for_document(
         event_log=make_event_log(conn),
         bucket_config=BucketConfig(),
         pin_colors=load_pins_for_document(conn, document_id),
+        chunk_ratings=get_ratings_for_document(conn, document_id),
         document_id=document_id,
         current_position=current,
         high_water_position=high_water,

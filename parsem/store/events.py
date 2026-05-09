@@ -30,6 +30,7 @@ EventType = Literal[
     "reveal",
     "conceal",
     "rate_effort",
+    "rate_clear",
     "pin_set",
     "pin_clear",
     "open_document",
@@ -99,6 +100,15 @@ class EventLog:
             raise ValueError(f"rating must be in 1..5, got {rating}")
         payload: RateEffortPayload = {"rating": rating}
         return self._append("rate_effort", document_id, chunk_id, payload, created_at)
+
+    def rate_clear(
+        self, *, document_id: int, chunk_id: int, created_at: datetime
+    ) -> ReadingEvent:
+        """Wipe the rating on a chunk. Mirrors `pin_clear` — the projection
+        deletes the chunk_ratings row; replay reproduces the wiped state.
+        Raised by the dot-toggle UX (claude-axx.3): clicking a filled
+        rating dot a second time clears the rating."""
+        return self._append("rate_clear", document_id, chunk_id, None, created_at)
 
     def pin_set(
         self, *, document_id: int, chunk_id: int, color_id: int, created_at: datetime
