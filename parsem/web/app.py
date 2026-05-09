@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import sqlite3
 from pathlib import Path
 
@@ -18,17 +17,6 @@ from parsem.web.state import ReaderState
 _WEB_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _WEB_DIR / "templates"
 _STATIC_DIR = _WEB_DIR / "static"
-
-_NEWLINE_RUN = re.compile(r"\n{3,}")
-
-
-def _clean_chunk_whitespace(text: str) -> str:
-    """Collapse runs of 3+ newlines to a single paragraph break and
-    strip trailing whitespace. Source markdown often has heading-body
-    gaps that `white-space: pre-wrap` would otherwise render as 2
-    blank lines mid-chunk (Parsem-ew8). Leading whitespace is
-    preserved so code-block indentation survives."""
-    return _NEWLINE_RUN.sub("\n\n", text).rstrip()
 
 
 def create_app(
@@ -48,9 +36,7 @@ def create_app(
     app.state.reader = state
     app.state.db = db
     app.state.originals_dir = originals_dir
-    templates = Jinja2Templates(directory=_TEMPLATES_DIR)
-    templates.env.filters["clean_chunk"] = _clean_chunk_whitespace
-    app.state.templates = templates
+    app.state.templates = Jinja2Templates(directory=_TEMPLATES_DIR)
     app.include_router(reader_router)
     app.include_router(upload_router)
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")

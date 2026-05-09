@@ -202,9 +202,10 @@ def _heading_with_absorbed_chunk(
     """
     abs_end = absorbed[-1].char_end
     absorbed_body = paragraph.text[absorbed[0].char_start : abs_end]
-    # rstrip the heading: source slice keeps its trailing newline, and
-    # heading + separator + body would otherwise concatenate to a
-    # 3-newline run that pre-wrap renders as 2 blank lines mid-chunk.
+    # rstrip the heading: source slice keeps its trailing newline,
+    # which combined with the body separator would yield a
+    # `\n\n\n` run. Tidier for source-faithful chunks even though
+    # the markdown renderer (Parsem-kli) collapses it anyway.
     combined = heading.text.rstrip() + _HEADING_BODY_SEPARATOR + absorbed_body
     return Chunk(
         position=position,

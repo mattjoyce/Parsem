@@ -23,14 +23,14 @@
     <div class="layout">
       <aside class="gutter gutter--left"></aside>
       <section class="column">
-        {% for chunk in visible_chunks %}
+        {% for entry in visible_chunks %}
         <article
-          class="chunk {% if chunk.position == current_position %}chunk--current{% else %}chunk--settled{% endif %}"
-          data-chunk-position="{{ chunk.position }}"
+          class="chunk {% if entry.chunk.position == current_position %}chunk--current{% else %}chunk--settled{% endif %}"
+          data-chunk-position="{{ entry.chunk.position }}"
         >
           <span class="pin-dot"
-            {% if chunk.position in pin_colors %}data-pin-color="{{ pin_colors[chunk.position] }}"{% endif %}
-          ></span>{{ chunk.text | clean_chunk }}</article>
+            {% if entry.chunk.position in pin_colors %}data-pin-color="{{ pin_colors[entry.chunk.position] }}"{% endif %}
+          ></span>{{ entry.html }}</article>
         {% endfor %}
         <nav class="rating-prompt" aria-label="Rate effort">
           {% for r in [1, 2, 3, 4, 5] %}
@@ -39,7 +39,7 @@
           {% endfor %}
         </nav>
         {% if next_chunk %}
-        <div class="preview" data-chunk-position="{{ next_chunk.position }}" aria-hidden="true">{{ next_chunk.text | clean_chunk }}</div>
+        <div class="preview" data-chunk-position="{{ next_chunk.chunk.position }}" aria-hidden="true">{{ next_chunk.html }}</div>
         {% endif %}
       </section>
       <aside class="gutter gutter--right"></aside>

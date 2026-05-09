@@ -6,13 +6,45 @@ Presentation logic only; no IO, no clock, no global state.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
+from markdown_it import MarkdownIt
+from markupsafe import Markup
+
 from parsem.domain.bucket import tokens_now
-from parsem.domain.chunking import Chunk, Section
+from parsem.domain.chunking import Chunk
 from parsem.web.state import ReaderState
 
-WINDOW_K = 5
+_RENDERER = MarkdownIt("commonmark", {"html": False})
+# Explicit `html=False` — the commonmark profile actually defaults to
+# `html=True`, so we override. Raw HTML / `<script>` in user-uploaded
+# markdown is escaped to text. Single-user local-first app — the user
+# owns their corpus — but defense in depth keeps the render layer
+# honest (Parsem-kli).
+
+
+@lru_cache(maxsize=2000)
+def render_chunk_html(text: str) -> Markup:
+    """Render a chunk's source markdown as HTML, wrapped in `Markup`
+    so Jinja autoescape passes it through unmodified.
+
+    Memoized: every reveal/conceal/pin POST re-renders the entire
+    revealed prefix. Chunk text is immutable, so the same chunk's
+    HTML is computed once per process. Bounded cache keeps memory
+    flat across multiple opened documents."""
+    return Markup(_RENDERER.render(text))
+
+
+@dataclass(frozen=True)
+class VisibleChunk:
+    """Template-side bundle of a chunk and its rendered HTML.
+    The chunk carries position/pin metadata; the html is the
+    Obsidian-style rendered body."""
+
+    chunk: Chunk
+    html: Markup
 
 
 def _heading_line(chunk_text: str) -> str:
@@ -39,26 +71,19 @@ def next_chunk(chunks: list[Chunk], current: int) -> Chunk | None:
     return None
 
 
-def windowed_chunks(
-    chunks: list[Chunk], current: int, k: int, sections: list[Section]
-) -> list[Chunk]:
-    """Return the last ``k`` chunks ending at ``current``, clamped both at
-    zero AND at the start of the section containing ``current``. The
-    section clamp implements spec §15.1's "window clears at every heading":
-    when the reader crosses into a new section, the prior section's chunks
-    vanish from the visible window. (Parsem-apa.)
-    """
-    section_start = 0
-    for section in sections:
-        if section.start_chunk_position <= current <= section.end_chunk_position:
-            section_start = section.start_chunk_position
-            break
-    start = max(section_start, current - (k - 1))
-    return chunks[start : current + 1]
+def revealed_chunks(chunks: list[Chunk], current: int) -> list[Chunk]:
+    """All chunks revealed so far INCLUDING the current one.
+
+    Replaces the Parsem-apa section-clamped sliding window. The reader
+    is now a growing rendered document — scroll back through the full
+    history (Parsem-kli). The .chunk--current vertical bar marks "now";
+    the .chunk--settled opacity knob hides prior content visually
+    while preserving its scroll-depth footprint."""
+    return chunks[: current + 1]
 
 
 def current_section_heading(
-    chunks: list[Chunk], sections: list[Section], current: int
+    chunks: list[Chunk], sections: list[Any], current: int
 ) -> str | None:
     """Return the heading text of the section containing ``current``, or None
     for the prologue (a section with no heading chunk) AND for H1 sections
@@ -100,16 +125,24 @@ def _progress_percent(current: int, total: int) -> float:
     return round(current * 100 / total, 1)
 
 
-def build_reader_context(state: ReaderState, *, k: int = WINDOW_K) -> dict[str, Any]:
+def build_reader_context(state: ReaderState) -> dict[str, Any]:
     """Assemble the dict the reader template renders against. Single source
     of truth for the partial's view-model.
 
-    Bucket-empty signaling moved out of the view context (Parsem-0if): the
-    top-bar token pictograph carries "when can I reveal next" and the
-    rejection motion (CSS animation triggered by JS reading the
-    ``X-Reveal-Outcome`` header) carries "why not now."
+    Each entry in `visible_chunks` is a `VisibleChunk` carrying both the
+    chunk and its rendered HTML, so the template doesn't run markdown
+    rendering inline.
     """
-    visible = windowed_chunks(state.chunks, state.current_position, k, state.sections)
+    visible = [
+        VisibleChunk(chunk=c, html=render_chunk_html(c.text))
+        for c in revealed_chunks(state.chunks, state.current_position)
+    ]
+    upcoming = next_chunk(state.chunks, state.current_position)
+    upcoming_visible = (
+        VisibleChunk(chunk=upcoming, html=render_chunk_html(upcoming.text))
+        if upcoming is not None
+        else None
+    )
     filled = tokens_now(state.paid_reveal_times, state.bucket_config, state.clock())
     progress_current = state.current_position + 1
     progress_total = len(state.chunks)
@@ -128,5 +161,5 @@ def build_reader_context(state: ReaderState, *, k: int = WINDOW_K) -> dict[str, 
             filled, state.bucket_config.capacity, state.bucket_config.regen_seconds
         ),
         "regen_seconds": state.bucket_config.regen_seconds,
-        "next_chunk": next_chunk(state.chunks, state.current_position),
+        "next_chunk": upcoming_visible,
     }

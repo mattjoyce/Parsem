@@ -14,8 +14,11 @@ def test_get_reader_returns_200_html(client: TestClient) -> None:
 
 
 def test_get_reader_renders_first_chunk_text(client: TestClient, state: ReaderState) -> None:
+    """Chunk content reaches the page. Strip the leading markdown
+    heading markers since chunks are rendered to HTML (Parsem-kli)."""
     response = client.get("/documents/1/reader")
-    assert state.chunks[0].text.strip().split("\n")[0] in response.text
+    first_line = state.chunks[0].text.strip().split("\n")[0].lstrip("#").strip()
+    assert first_line in response.text
 
 
 def test_get_reader_returns_full_html_document(client: TestClient) -> None:
@@ -26,11 +29,12 @@ def test_get_reader_returns_full_html_document(client: TestClient) -> None:
 def test_reader_renders_chunks_with_data_chunk_position(
     client: TestClient, state: ReaderState
 ) -> None:
-    """Section "The token bucket" spans chunks 4..7; current=7 fills
-    the section-clamped window (Parsem-apa) with [4, 5, 6, 7]."""
+    """At current=7 the growing-document model (Parsem-kli) shows ALL
+    revealed chunks 0..7 in the DOM — not just the prior K-window
+    (the Parsem-apa section-clamp is gone)."""
     state.current_position = 7
     response = client.get("/documents/1/reader")
-    for pos in (4, 5, 6, 7):
+    for pos in range(0, 8):
         assert f'data-chunk-position="{pos}"' in response.text
 
 
@@ -137,7 +141,7 @@ def test_reader_renders_blurred_preview_of_next_chunk(
 ) -> None:
     response = client.get("/documents/1/reader")
     assert 'class="preview"' in response.text
-    next_text = state.chunks[1].text.strip().split("\n")[0]
+    next_text = state.chunks[1].text.strip().split("\n")[0].lstrip("#").strip()
     assert next_text in response.text
 
 
