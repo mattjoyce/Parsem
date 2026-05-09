@@ -24,6 +24,7 @@ from parsem.store.documents import (
     delete_document,
     delete_document_chunks_and_sections,
     list_library_rows,
+    load_chunk_ratings_dense,
     load_document,
     mark_document_failed,
     progress_percent_for_document,
@@ -102,6 +103,7 @@ def post_rename(
     rename_document(conn, document_id, title=title, now=now)
     updated = replace(doc, title=title, updated_at=now)
     progress = progress_percent_for_document(conn, document_id)
+    chunk_ratings = load_chunk_ratings_dense(conn, document_id, doc.total_chunks)
     templates = request.app.state.templates
     return templates.TemplateResponse(
         request,
@@ -109,6 +111,7 @@ def post_rename(
         {
             "doc": updated,
             "progress_percent": progress,
+            "chunk_ratings": chunk_ratings,
             "title_max_len": _TITLE_MAX_LEN,
         },
     )

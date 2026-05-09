@@ -25,6 +25,7 @@
       {% for row in rows %}
         {% set doc = row.document %}
         {% set progress_percent = row.progress_percent %}
+        {% set chunk_ratings = row.chunk_ratings %}
         {% include "_library_row.html" %}
       {% endfor %}
     </tbody>

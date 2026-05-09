@@ -7,7 +7,20 @@
     <span class="library-failure-reason">— {{ doc.failure_reason }}</span>
     {% endif %}
   </td>
-  <td class="library-col-progress">{{ progress_percent }}%</td>
+  <td class="library-col-progress">
+    {{ progress_percent }}%
+    {# Heatmap strip — one thin column per chunk, tinted by latest
+       rating (spec §9.1, claude-yda). Renders only when the doc has
+       chunks (chunk_ratings non-empty). aria-hidden because the
+       progress percent carries the textual signal. #}
+    {% if chunk_ratings %}
+    <div class="library-heatmap" aria-hidden="true">
+      {% for r in chunk_ratings %}
+      <span class="library-heatmap__cell{% if r %} library-heatmap__cell--{{ r }}{% endif %}"></span>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </td>
   <td class="library-col-actions">
     {% if doc.status == "failed" %}
       <form method="post" action="/documents/{{ doc.id }}/retry-parse" class="library-action-form">

@@ -220,6 +220,33 @@ def test_reader_after_click_back_preview_targets_post_high_water(
     assert 'data-chunk-position="8"' in response.text
 
 
+def test_reader_renders_rating_bar_for_rated_chunk(
+    client: TestClient, state: ReaderState
+) -> None:
+    """Per-chunk rating bar (spec §14.3, claude-yda) — a rated chunk
+    renders a <div class="rating-bar rating-bar--N"> at its bottom
+    edge, tinted by the latest rating."""
+    state.high_water_position = 4
+    state.current_position = 4
+    state.chunk_ratings[2] = 4
+    response = client.get("/documents/1/reader")
+    assert "rating-bar--4" in response.text
+
+
+def test_reader_omits_rating_bar_for_unrated_chunks(
+    client: TestClient, state: ReaderState
+) -> None:
+    """Chunks with no rating render no rating-bar element — the
+    template guards on chunk_ratings membership so unrated chunks
+    don't carry an empty bar."""
+    client.get("/documents/1/reader")  # ensure doc opened
+    state.high_water_position = 4
+    state.current_position = 4
+    state.chunk_ratings.clear()
+    response = client.get("/documents/1/reader")
+    assert "rating-bar--" not in response.text
+
+
 def test_reader_main_carries_high_water_data_attr(
     client: TestClient, state: ReaderState
 ) -> None:

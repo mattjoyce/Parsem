@@ -236,6 +236,124 @@ def test_library_progress_for_failed_doc_with_no_total_chunks_is_zero(
     assert "0%" in body
 
 
+# ─── Library heatmap strip (claude-yda) ───────────────────────────────
+
+
+def _seed_doc_with_chunks_and_ratings(
+    conn: sqlite3.Connection,
+    *,
+    title: str,
+    chunk_count: int,
+    ratings: dict[int, int],
+) -> int:
+    """Insert a document with `chunk_count` chunks and per-position
+    ratings. Used to verify the library heatmap renders one cell per
+    chunk with the right rating-class modifier."""
+    doc_id = insert_document(
+        conn,
+        title=title,
+        original_path=f"data/originals/{title}.md",
+        status="ready",
+        total_chunks=chunk_count,
+        now=T0,
+    )
+    chunk_ids: list[int] = []
+    for pos in range(chunk_count):
+        cur = conn.execute(
+            "INSERT INTO chunks (document_id, position, source_offset_start,"
+            " source_offset_end, text, lead_token_type, estimated_read_seconds,"
+            " created_at) VALUES (?, ?, ?, ?, ?, 'paragraph', 1.0, ?)",
+            (doc_id, pos, pos * 10, pos * 10 + 5, f"c{pos}", T0.isoformat()),
+        )
+        cid = cur.lastrowid
+        assert cid is not None
+        chunk_ids.append(cid)
+    for pos, rating in ratings.items():
+        conn.execute(
+            "INSERT INTO chunk_ratings (chunk_id, rating, updated_at)"
+            " VALUES (?, ?, ?)",
+            (chunk_ids[pos], rating, T0.isoformat()),
+        )
+    conn.commit()
+    return doc_id
+
+
+def test_library_heatmap_renders_one_cell_per_chunk(
+    empty_app: tuple[TestClient, sqlite3.Connection],
+) -> None:
+    """Heatmap strip has one <span class="library-heatmap__cell"> per
+    chunk position — the strip width tracks total_chunks regardless
+    of how many chunks are rated."""
+    client, conn = empty_app
+    _seed_doc_with_chunks_and_ratings(
+        conn, title="rated", chunk_count=5, ratings={1: 4}
+    )
+    body = client.get("/library").text
+    assert body.count('class="library-heatmap__cell"') + body.count(
+        'library-heatmap__cell library-heatmap__cell--'
+    ) == 5
+
+
+def test_library_heatmap_tints_rated_cell_by_rating(
+    empty_app: tuple[TestClient, sqlite3.Connection],
+) -> None:
+    """A chunk rated 4 renders with the modifier class
+    library-heatmap__cell--4 so CSS can tint it amber per spec §9.1."""
+    client, conn = empty_app
+    _seed_doc_with_chunks_and_ratings(
+        conn, title="rated", chunk_count=3, ratings={0: 4}
+    )
+    body = client.get("/library").text
+    assert "library-heatmap__cell--4" in body
+
+
+def test_library_heatmap_omits_modifier_for_unrated_cells(
+    empty_app: tuple[TestClient, sqlite3.Connection],
+) -> None:
+    """Unrated chunks render the bare cell class without a rating
+    modifier — CSS treats the absence as transparent (background:
+    rgba(0,0,0,0.04) on the strip itself shows through)."""
+    client, conn = empty_app
+    _seed_doc_with_chunks_and_ratings(
+        conn, title="unrated", chunk_count=3, ratings={}
+    )
+    body = client.get("/library").text
+    # Some heatmap cells exist
+    assert "library-heatmap__cell" in body
+    # No rating modifiers (1..5)
+    for r in range(1, 6):
+        assert f"library-heatmap__cell--{r}" not in body
+
+
+def test_library_heatmap_absent_when_doc_has_no_chunks(
+    empty_app: tuple[TestClient, sqlite3.Connection],
+) -> None:
+    """Failed / processing docs (total_chunks=NULL) don't render a
+    heatmap — there's nothing to tint. The progress percent text
+    still renders (the existing 0%-no-total test guards that)."""
+    client, conn = empty_app
+    _insert(conn, title="failed-doc", status="failed", created_at=T0)
+    body = client.get("/library").text
+    assert 'class="library-heatmap"' not in body
+
+
+def test_library_heatmap_renders_in_row_via_rename_route(
+    empty_app: tuple[TestClient, sqlite3.Connection],
+) -> None:
+    """The rename route re-renders the row partial; the heatmap must
+    survive that re-render so the row stays consistent after a title
+    edit (claude-yda)."""
+    client, conn = empty_app
+    doc_id = _seed_doc_with_chunks_and_ratings(
+        conn, title="rated", chunk_count=3, ratings={1: 5}
+    )
+    response = client.post(
+        f"/documents/{doc_id}/rename", json={"title": "renamed"}
+    )
+    assert response.status_code == 200
+    assert "library-heatmap__cell--5" in response.text
+
+
 def test_progress_percent_pure_function_clamps_and_rounds() -> None:
     """Direct unit test of the pure formula — keeps rounding/clamping
     behaviour isolated from the SQL layer."""

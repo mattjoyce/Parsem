@@ -49,7 +49,13 @@
               aria-pressed="{% if current_chunk_rating == r %}true{% else %}false{% endif %}"
             ></button>
             {% endfor %}
-          </nav>{% endif %}</article>
+          </nav>{% endif %}{# Per-chunk effort-rating bar (spec §14.3,
+          claude-yda) — a subtle horizontal stripe at the chunk's
+          bottom edge, tinted by the latest rating. Renders only when
+          the chunk has a rating; otherwise nothing. #}{% if entry.chunk.position in chunk_ratings %}<div
+            class="rating-bar rating-bar--{{ chunk_ratings[entry.chunk.position] }}"
+            aria-hidden="true"
+          ></div>{% endif %}</article>
         {% endfor %}
         {% if next_chunk %}
         {# Preview always sits at the bottom of the column — it shows

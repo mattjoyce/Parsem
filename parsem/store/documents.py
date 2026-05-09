@@ -224,11 +224,17 @@ def load_document(conn: sqlite3.Connection, document_id: int) -> Document | None
 @dataclass(frozen=True)
 class LibraryRow:
     """A document plus the small bits of derived display state the
-    library row needs. Bead Parsem-5oi adds `progress_percent`; future
-    beads may add the heatmap strip here too (Parsem-8p5)."""
+    library row needs. Parsem-5oi adds `progress_percent`; claude-yda
+    adds `chunk_ratings` for the heatmap strip per spec §9.1.
+
+    `chunk_ratings` is a dense list indexed by chunk position; entry
+    i is the latest rating (1..5) on chunk i, or None for unrated.
+    Length == document.total_chunks (or 0 when total_chunks is
+    unknown / the doc never parsed)."""
 
     document: Document
     progress_percent: int
+    chunk_ratings: list[int | None]
 
 
 def progress_percent(total_chunks: int | None, current_position: int | None) -> int:
@@ -260,13 +266,15 @@ def _document_from_row(row: sqlite3.Row) -> Document:
 
 
 def list_library_rows(conn: sqlite3.Connection) -> list[LibraryRow]:
-    """All documents with progress percent, ordered by last-opened DESC
-    (reading_state.updated_at), falling back to created_at for never-
-    opened docs, with a stable secondary sort by title. Spec §9.1;
-    beads Parsem-3z8 + Parsem-5oi.
+    """All documents with progress percent and chunk-rating heatmap
+    data, ordered by last-opened DESC (reading_state.updated_at),
+    falling back to created_at for never-opened docs, with a stable
+    secondary sort by title. Spec §9.1; Parsem-3z8 + Parsem-5oi +
+    claude-yda.
 
-    Single LEFT JOIN against reading_state covers ordering AND progress
-    computation in one round trip.
+    Single LEFT JOIN against reading_state covers ordering AND
+    progress; a separate per-doc query collects ratings for the
+    heatmap strip.
     """
     rows = conn.execute(
         "SELECT d.id, d.title, d.source_type, d.original_path, d.status,"
@@ -276,15 +284,45 @@ def list_library_rows(conn: sqlite3.Connection) -> list[LibraryRow]:
         " LEFT JOIN reading_state rs ON rs.document_id = d.id"
         " ORDER BY COALESCE(rs.updated_at, d.created_at) DESC, d.title ASC"
     ).fetchall()
-    return [
-        LibraryRow(
-            document=_document_from_row(row),
+    result: list[LibraryRow] = []
+    for row in rows:
+        doc = _document_from_row(row)
+        ratings = load_chunk_ratings_dense(conn, doc.id, doc.total_chunks)
+        result.append(LibraryRow(
+            document=doc,
             progress_percent=progress_percent(
                 row["total_chunks"], row["current_position"]
             ),
-        )
-        for row in rows
-    ]
+            chunk_ratings=ratings,
+        ))
+    return result
+
+
+def load_chunk_ratings_dense(
+    conn: sqlite3.Connection, document_id: int, total_chunks: int | None
+) -> list[int | None]:
+    """Return a dense per-position rating list for the library heatmap
+    (claude-yda). Empty list when total_chunks is unknown (still
+    processing or failed). Unrated chunks are None.
+
+    JOIN chunks → chunk_ratings, position-keyed. The SQL filters by
+    document_id; no chunking_run filter — chunks with NULL
+    chunking_run_id (legacy fixtures) AND substrate-run chunks both
+    contribute, since the projection key is chunks.id and ratings
+    follow the chunk row regardless of which run produced it.
+    """
+    if not total_chunks:
+        return []
+    rows = conn.execute(
+        "SELECT c.position, r.rating"
+        " FROM chunks c"
+        " LEFT JOIN chunk_ratings r ON r.chunk_id = c.id"
+        " WHERE c.document_id = ?"
+        " ORDER BY c.position",
+        (document_id,),
+    ).fetchall()
+    by_pos: dict[int, int | None] = {row["position"]: row["rating"] for row in rows}
+    return [by_pos.get(i) for i in range(total_chunks)]
 
 
 def progress_percent_for_document(
