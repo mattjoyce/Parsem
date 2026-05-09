@@ -26,21 +26,20 @@ def test_get_reader_returns_full_html_document(client: TestClient) -> None:
 def test_reader_renders_chunks_with_data_chunk_position(
     client: TestClient, state: ReaderState
 ) -> None:
-    # Section 2 of welcome.md spans chunks 12-18; current=16 puts us K=5
-    # deep into that section so the section-clamped window (Parsem-apa)
-    # is fully populated with [12, 13, 14, 15, 16].
-    state.current_position = 16
+    """Section "The token bucket" spans chunks 4..7; current=7 fills
+    the section-clamped window (Parsem-apa) with [4, 5, 6, 7]."""
+    state.current_position = 7
     response = client.get("/documents/1/reader")
-    for pos in (12, 13, 14, 15, 16):
+    for pos in (4, 5, 6, 7):
         assert f'data-chunk-position="{pos}"' in response.text
 
 
 def test_reader_marks_current_chunk_distinctly_from_settled(
     client: TestClient, state: ReaderState
 ) -> None:
-    # current=16 keeps the windowed view fully populated within section 2
-    # (Parsem-apa clamps to section start).
-    state.current_position = 16
+    """Any non-zero position inside a section gives at least one
+    settled chunk plus the current one."""
+    state.current_position = 7
     response = client.get("/documents/1/reader")
     assert "chunk--current" in response.text
     assert "chunk--settled" in response.text
@@ -86,20 +85,22 @@ def test_reader_renders_rating_prompt_with_five_buttons(client: TestClient) -> N
         assert f'data-rating="{r}"' in response.text
 
 
-def test_reader_never_renders_countdown_text(client: TestClient, state: ReaderState) -> None:
-    """Empty-bucket UX is now a motion effect (Parsem-0if), not a text banner."""
+def test_reader_never_renders_countdown_ui(client: TestClient, state: ReaderState) -> None:
+    """Empty-bucket UX is now a motion effect (Parsem-0if), not a text
+    banner. Anchor on the markup classes, not substrings — welcome.md
+    content quotes the old banner text inside an example."""
     response = client.get("/documents/1/reader")
-    assert "Next reveal in" not in response.text
-    assert "Persist · Rate · Ask" not in response.text
+    assert 'class="countdown"' not in response.text
+    assert 'class="countdown-reminders"' not in response.text
 
 
-def test_reveal_response_never_renders_countdown(client: TestClient, state: ReaderState) -> None:
+def test_reveal_response_never_renders_countdown_ui(client: TestClient, state: ReaderState) -> None:
     from tests.web.conftest import exhaust_bucket
 
     exhaust_bucket(client, state)
     response = client.post("/reveal")
-    assert "Next reveal in" not in response.text
-    assert "Persist · Rate · Ask" not in response.text
+    assert 'class="countdown"' not in response.text
+    assert 'class="countdown-reminders"' not in response.text
 
 
 def test_reader_renders_top_bar_with_document_title(client: TestClient) -> None:

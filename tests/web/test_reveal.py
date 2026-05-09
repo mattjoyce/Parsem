@@ -44,13 +44,16 @@ def test_reveal_when_bucket_empty_signals_via_outcome_header_not_text(
     client: TestClient, state: ReaderState
 ) -> None:
     """Empty-bucket UX is now a motion effect (Parsem-0if). The body has
-    no countdown text; the JS layer reads X-Reveal-Outcome to decide
-    whether to play the rejection animation."""
+    no countdown UI element; the JS layer reads X-Reveal-Outcome to
+    decide whether to play the rejection animation."""
     _exhaust_bucket(client, state)
     response = client.post("/reveal")
     assert response.status_code == 200
     assert response.headers["X-Reveal-Outcome"] == "bucket_empty"
-    assert "Next reveal in" not in response.text
+    # Anchor on UI markup, not substrings — welcome.md content includes
+    # the literal words "Next reveal in 7s" inside a code-fence example.
+    assert 'class="countdown"' not in response.text
+    assert 'class="countdown-reminders"' not in response.text
 
 
 def test_reveal_when_bucket_empty_does_not_advance(client: TestClient, state: ReaderState) -> None:

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from parsem.domain.chunking import ChunkingConfig, chunk
 from parsem.parse.markdown_parse import ParsedBlock
 
@@ -57,11 +59,57 @@ def test_single_code_block_is_one_chunk_regardless_of_length() -> None:
     assert result.chunks[0].lead_token_type == "code"
 
 
-def test_each_list_item_produces_one_chunk() -> None:
+def test_each_list_item_produces_one_chunk_when_handling_is_item() -> None:
+    """list_handling='item' (legacy explicit) preserves per-item chunks."""
     blocks = [_block("list_item", f"- Item {i}", start=i * 20) for i in range(3)]
-    result = chunk(blocks, ChunkingConfig())
+    result = chunk(blocks, ChunkingConfig(list_handling="item"))
     assert len(result.chunks) == 3
     assert all(c.lead_token_type == "list_item" for c in result.chunks)
+
+
+def test_consecutive_list_items_merge_into_one_chunk_under_block_default() -> None:
+    """list_handling='block' is the default — three consecutive items
+    become one chunk with all three texts joined."""
+    blocks = [_block("list_item", f"- Item {i}\n", start=i * 20) for i in range(3)]
+    result = chunk(blocks, ChunkingConfig())
+    assert len(result.chunks) == 1
+    assert result.chunks[0].lead_token_type == "list_item"
+    assert "Item 0" in result.chunks[0].text
+    assert "Item 1" in result.chunks[0].text
+    assert "Item 2" in result.chunks[0].text
+
+
+def test_merged_list_chunk_spans_first_item_start_to_last_item_end() -> None:
+    blocks = [
+        _block("list_item", "- A\n", start=0),
+        _block("list_item", "- B\n", start=10),
+        _block("list_item", "- C\n", start=20),
+    ]
+    result = chunk(blocks, ChunkingConfig())
+    assert len(result.chunks) == 1
+    assert result.chunks[0].source_offset_start == 0
+    assert result.chunks[0].source_offset_end == blocks[-1].source_offset_end
+
+
+def test_non_consecutive_list_items_form_separate_chunks() -> None:
+    """A paragraph between two lists splits them into two list-chunks."""
+    blocks = [
+        _block("list_item", "- A\n", start=0),
+        _block("list_item", "- B\n", start=10),
+        _block("paragraph", "Between.", start=20),
+        _block("list_item", "- C\n", start=40),
+        _block("list_item", "- D\n", start=50),
+    ]
+    result = chunk(blocks, ChunkingConfig())
+    list_chunks = [c for c in result.chunks if c.lead_token_type == "list_item"]
+    assert len(list_chunks) == 2
+
+
+def test_single_item_list_under_block_handling_produces_one_chunk() -> None:
+    blocks = [_block("list_item", "- only\n", start=0)]
+    result = chunk(blocks, ChunkingConfig())
+    assert len(result.chunks) == 1
+    assert result.chunks[0].lead_token_type == "list_item"
 
 
 def test_blockquote_is_one_chunk_regardless_of_length() -> None:
@@ -272,19 +320,18 @@ def test_absorbed_heading_chunk_offsets_span_heading_to_paragraph_prefix() -> No
     assert absorbed_chunk.source_offset_end == paragraph.source_offset_end
 
 
-def test_unsupported_code_handling_mode_raises_not_implemented() -> None:
+@pytest.mark.parametrize(
+    "config",
+    [
+        ChunkingConfig(code_handling="prose"),
+        ChunkingConfig(list_handling="prose"),
+    ],
+    ids=["code_handling=prose", "list_handling=prose"],
+)
+def test_unsupported_handling_mode_raises_not_implemented(
+    config: ChunkingConfig,
+) -> None:
     block = _block("paragraph", "Anything.")
-    config = ChunkingConfig(code_handling="prose")
-    try:
-        chunk([block], config)
-    except NotImplementedError:
-        return
-    raise AssertionError("expected NotImplementedError")
-
-
-def test_unsupported_list_handling_mode_raises_not_implemented() -> None:
-    block = _block("paragraph", "Anything.")
-    config = ChunkingConfig(list_handling="block")
     try:
         chunk([block], config)
     except NotImplementedError:

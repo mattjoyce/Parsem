@@ -28,14 +28,17 @@ from parsem.parse.sentence import Sentence, split_sentences
 
 @dataclass(frozen=True)
 class ChunkingConfig:
-    """Chunking knobs. Defaults match spec §20."""
+    """Chunking knobs. Defaults tuned for paragraph-sized chunks
+    (Parsem-ew8): 30s budget at 220 wpm yields ~110 words, comfortably
+    one paragraph. `list_handling='block'` keeps consecutive list
+    items together so a list reads as one unit, not powerpoint slides."""
 
-    budget_seconds: int = 10
+    budget_seconds: int = 30
     read_wpm_prose: int = 220
     read_wpm_code: int = 110
     wpm_user_scaling: float = 1.0
     code_handling: Literal["block", "prose"] = "block"
-    list_handling: Literal["item", "block", "prose"] = "item"
+    list_handling: Literal["item", "block", "prose"] = "block"
 
 
 @dataclass(frozen=True)
@@ -75,10 +78,11 @@ _HEADING_BODY_SEPARATOR = "\n\n"
 
 def chunk(blocks: list[ParsedBlock], config: ChunkingConfig) -> ChunkerOutput:
     """Transform parsed blocks into chunks and sections."""
-    if config.code_handling != "block" or config.list_handling != "item":
+    if config.code_handling != "block" or config.list_handling not in ("item", "block"):
         raise NotImplementedError(
-            "Phase 1 supports only code_handling='block' and list_handling='item'. "
-            "Other modes are spec'd in §11.3 but unimplemented."
+            "Supported: code_handling='block', list_handling in {'item','block'}. "
+            "list_handling='prose' and code_handling='prose' are spec'd in §11.3 "
+            "but unimplemented."
         )
 
     chunks: list[Chunk] = []
@@ -93,11 +97,38 @@ def chunk(blocks: list[ParsedBlock], config: ChunkingConfig) -> ChunkerOutput:
         elif block.type == "paragraph":
             chunks.extend(_pack_paragraph(block, config, len(chunks)))
             i += 1
+        elif block.type == "list_item" and config.list_handling == "block":
+            run_end = i
+            while run_end + 1 < len(blocks) and blocks[run_end + 1].type == "list_item":
+                run_end += 1
+            chunks.append(_merge_list_chunk(blocks[i : run_end + 1], config, len(chunks)))
+            i = run_end + 1
         else:
             chunks.append(_solo_chunk(block, config, len(chunks)))
             i += 1
     sections = _derive_sections(chunks)
     return ChunkerOutput(chunks=chunks, sections=sections)
+
+
+def _merge_list_chunk(
+    items: list[ParsedBlock], config: ChunkingConfig, position: int
+) -> Chunk:
+    """Merge a run of consecutive `list_item` blocks into one chunk —
+    a list reads as one unit, not item-per-page.
+
+    Empty-string join is safe because `markdown_parse._token_to_block`
+    slices each block as `source[line_starts[start]:line_starts[end]]`,
+    so every non-final block's text already ends with `\\n`."""
+    combined = "".join(item.text for item in items)
+    return Chunk(
+        position=position,
+        source_offset_start=items[0].source_offset_start,
+        source_offset_end=items[-1].source_offset_end,
+        text=combined,
+        lead_token_type="list_item",
+        lead_heading_level=None,
+        estimated_read_seconds=_read_seconds(combined, "paragraph", config),
+    )
 
 
 def _solo_chunk(block: ParsedBlock, config: ChunkingConfig, position: int) -> Chunk:
@@ -171,7 +202,10 @@ def _heading_with_absorbed_chunk(
     """
     abs_end = absorbed[-1].char_end
     absorbed_body = paragraph.text[absorbed[0].char_start : abs_end]
-    combined = heading.text + _HEADING_BODY_SEPARATOR + absorbed_body
+    # rstrip the heading: source slice keeps its trailing newline, and
+    # heading + separator + body would otherwise concatenate to a
+    # 3-newline run that pre-wrap renders as 2 blank lines mid-chunk.
+    combined = heading.text.rstrip() + _HEADING_BODY_SEPARATOR + absorbed_body
     return Chunk(
         position=position,
         source_offset_start=heading.source_offset_start,

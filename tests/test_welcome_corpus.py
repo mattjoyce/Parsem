@@ -1,8 +1,9 @@
 """Structural tests for data/welcome.md (Parsem-6kk).
 
 The Phase 1 prototype loads this file from disk; these tests assert it
-exercises the chunker shape required by spec §11.3 and produces a chunk
-count in the targeted ~30-chunk range at the default 10s budget.
+exercises the chunker shape required by spec §11.3 and produces a
+chunk count appropriate for the default 30s paragraph-sized budget
+(Parsem-ew8).
 """
 
 from __future__ import annotations
@@ -47,8 +48,11 @@ def test_welcome_paragraph_contains_an_abbreviation() -> None:
 
 
 def test_welcome_chunks_to_target_count_at_default_budget() -> None:
+    """At the new 30s default + list_handling='block' (Parsem-ew8),
+    welcome.md packs into ~12-20 paragraph-sized chunks across its 5
+    H2 sections, with the bullet list collapsing to one chunk."""
     blocks = parse(_text())
     output = chunk(blocks, ChunkingConfig())
-    assert 25 <= len(output.chunks) <= 40, (
-        f"expected 25..40 chunks at 10s budget, got {len(output.chunks)}"
+    assert 10 <= len(output.chunks) <= 20, (
+        f"expected 10..20 chunks at 30s budget, got {len(output.chunks)}"
     )
