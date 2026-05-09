@@ -207,6 +207,89 @@ def test_documents_delete_cascades_to_children(db: sqlite3.Connection) -> None:
         assert count == 0, f"cascade failed for {table}"
 
 
+# ─── v3 PDF-readiness hooks (claude-axx.7) ────────────────────────────
+
+
+def test_v3_extraction_runs_table_exists(db: sqlite3.Connection) -> None:
+    """v3 reserves a structural seam for non-markdown source ingest
+    (PDF/epub/etc.). The table is empty for markdown-only ingest."""
+    assert _table_exists(db, "extraction_runs")
+
+
+def test_v3_extraction_runs_columns(db: sqlite3.Connection) -> None:
+    cols = _columns(db, "extraction_runs")
+    assert {"id", "document_id", "source_type", "extractor_name",
+            "extractor_version", "source_path", "params_json",
+            "created_at"} <= set(cols)
+
+
+def test_v3_document_revisions_extraction_run_id_nullable(
+    db: sqlite3.Connection,
+) -> None:
+    """Markdown ingest creates revisions with extraction_run_id NULL —
+    revision IS the upload. The column must be nullable."""
+    cols = _columns(db, "document_revisions")
+    assert "extraction_run_id" in cols
+    # PRAGMA table_info `notnull` is 0 when nullable, 1 when NOT NULL.
+    assert cols["extraction_run_id"]["notnull"] == 0
+
+
+def test_v3_atomic_pieces_external_anchor_json_nullable(
+    db: sqlite3.Connection,
+) -> None:
+    """Non-markdown converters can stash source-shaped anchors here
+    (pdf_page, pdf_y, epub_cfi). NULL for markdown pieces."""
+    cols = _columns(db, "atomic_pieces")
+    assert "external_anchor_json" in cols
+    assert cols["external_anchor_json"]["notnull"] == 0
+
+
+def test_v3_extraction_runs_cascades_on_document_delete(
+    db: sqlite3.Connection,
+) -> None:
+    """Deleting a document drops its extraction_runs (FK ON DELETE
+    CASCADE) — same lifecycle as document_revisions."""
+    db.execute(
+        "INSERT INTO documents (id, title, original_path, status, created_at, updated_at)"
+        " VALUES (1, 't', 'p', 'ready', '2026-01-01', '2026-01-01')"
+    )
+    db.execute(
+        "INSERT INTO extraction_runs (document_id, source_type, extractor_name,"
+        " extractor_version, source_path, created_at)"
+        " VALUES (1, 'pdf', 'pdftotext', '0.1.0', '/x.pdf', '2026-01-01')"
+    )
+    db.execute("DELETE FROM documents WHERE id=1")
+    count = db.execute("SELECT COUNT(*) FROM extraction_runs").fetchone()[0]
+    assert count == 0
+
+
+def test_v3_revision_extraction_run_set_null_on_extraction_delete(
+    db: sqlite3.Connection,
+) -> None:
+    """Deleting an extraction_run nulls the revision's link rather
+    than cascading — the revision (= the converted markdown) survives
+    even if the converter run record is purged."""
+    db.execute(
+        "INSERT INTO documents (id, title, original_path, status, created_at, updated_at)"
+        " VALUES (1, 't', 'p', 'ready', '2026-01-01', '2026-01-01')"
+    )
+    db.execute(
+        "INSERT INTO extraction_runs (id, document_id, source_type,"
+        " extractor_name, extractor_version, source_path, created_at)"
+        " VALUES (1, 1, 'pdf', 'pdftotext', '0.1.0', '/x.pdf', '2026-01-01')"
+    )
+    db.execute(
+        "INSERT INTO document_revisions (id, document_id, full_text,"
+        " content_hash, line_index_json, created_at, extraction_run_id)"
+        " VALUES (1, 1, 'hi', 'h', '[]', '2026-01-01', 1)"
+    )
+    db.execute("DELETE FROM extraction_runs WHERE id=1")
+    row = db.execute(
+        "SELECT extraction_run_id FROM document_revisions WHERE id=1"
+    ).fetchone()
+    assert row["extraction_run_id"] is None
+
+
 def test_db_module_does_not_import_from_web_or_domain() -> None:
     """db.py is the bottom of the dependency stack — it must not pull
     in anything from parsem.web or parsem.domain (would create a cycle

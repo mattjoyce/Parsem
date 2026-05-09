@@ -212,8 +212,50 @@ DELETE FROM sqlite_sequence
  WHERE name IN ('documents', 'sections', 'chunks', 'reading_events', 'pins');
 """
 
+# v3 — PDF-readiness hooks (claude-axx.7). Pure additions; no behaviour
+# change for the markdown ingest path. Reserves three structural seams
+# so a future PDF (or epub / docx) ingest can land without touching
+# already-committed schema.
+#
+#   1. extraction_runs — parallel to chunking_runs but for the
+#      source -> markdown step. Markdown-only ingest creates no row;
+#      future PDF ingest creates one and links it from the revision.
+#   2. document_revisions.extraction_run_id — nullable FK back to
+#      extraction_runs. NULL means "the revision IS the upload"
+#      (current markdown path).
+#   3. atomic_pieces.external_anchor_json — TEXT (JSON), NULL by
+#      default. Lets non-markdown converters stash source-shaped
+#      anchors (pdf_page, pdf_y, epub_cfi, ...) per piece. No code
+#      path consumes it yet.
+#
+# documents.source_type vocabulary — NOT a schema change. The TEXT
+# column already exists (v1). v3 only formalises the supported values:
+#   'markdown' (default, in use now)
+#   reserved for future: 'pdf', 'epub', 'html', 'docx'
+#
+# All additions are NULL-safe for existing rows; no backfill needed.
+SCHEMA_V3 = """
+CREATE TABLE extraction_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL,
+    source_type TEXT NOT NULL,
+    extractor_name TEXT NOT NULL,
+    extractor_version TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    params_json TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_extraction_runs_doc ON extraction_runs(document_id, created_at DESC);
+
+ALTER TABLE document_revisions ADD COLUMN extraction_run_id INTEGER
+    REFERENCES extraction_runs(id) ON DELETE SET NULL;
+
+ALTER TABLE atomic_pieces ADD COLUMN external_anchor_json TEXT;
+"""
+
 # Forward-only migration list. Index = (version - 1). Append, never edit.
-MIGRATIONS: list[str] = [SCHEMA_V1, SCHEMA_V2]
+MIGRATIONS: list[str] = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3]
 
 
 def connect(path: str | Path = ":memory:") -> sqlite3.Connection:
