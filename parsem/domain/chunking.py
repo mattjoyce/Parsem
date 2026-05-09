@@ -99,8 +99,13 @@ def chunk(blocks: list[ParsedBlock], config: ChunkingConfig) -> ChunkerOutput:
             chunks.extend(heading_chunks)
             i += 2 if consumed_next else 1
         elif block.type == "paragraph":
-            chunks.extend(_pack_paragraph(block, config, len(chunks)))
-            i += 1
+            run_end = i
+            while run_end + 1 < len(blocks) and blocks[run_end + 1].type == "paragraph":
+                run_end += 1
+            chunks.extend(
+                _pack_paragraph_run(blocks[i : run_end + 1], config, len(chunks))
+            )
+            i = run_end + 1
         elif block.type == "list_item" and config.list_handling == "block":
             run_end = i
             while run_end + 1 < len(blocks) and blocks[run_end + 1].type == "list_item":
@@ -270,22 +275,16 @@ def _heading_with_absorbed_chunk(
     )
 
 
-def _pack_paragraph(
-    block: ParsedBlock,
-    config: ChunkingConfig,
-    position_offset: int,
-) -> list[Chunk]:
-    """Greedily pack whole sentences from a paragraph into budget-sized chunks."""
-    return _pack_sentences(split_sentences(block.text), block, config, position_offset)
-
-
 def _pack_sentences(
     sentences: list[Sentence],
     source_block: ParsedBlock,
     config: ChunkingConfig,
     position_offset: int,
 ) -> list[Chunk]:
-    """Pack sentences from a single source block into budget-sized chunks."""
+    """Pack sentences from a single source block into budget-sized chunks.
+    Used by `_absorb_heading` for the post-absorption remainder of the
+    paragraph it consumed; cross-paragraph packing goes through
+    `_pack_paragraph_run` instead."""
     if not sentences:
         return []
 
@@ -309,13 +308,57 @@ def _pack_sentences(
     return chunks
 
 
+def _pack_paragraph_run(
+    blocks_run: list[ParsedBlock],
+    config: ChunkingConfig,
+    position_offset: int,
+) -> list[Chunk]:
+    """Greedily pack whole sentences across a run of consecutive paragraph
+    blocks into budget-sized chunks. Spec §11.1; bead Parsem-e9t.
+
+    Sentences carry their source-block reference so each chunk can map
+    its slice back to the right block's text. Sentences from different
+    blocks join with `\\n\\n` so the renderer treats them as adjacent
+    paragraphs in the rendered HTML."""
+    sentences_with_block: list[tuple[Sentence, ParsedBlock]] = []
+    for block in blocks_run:
+        for sentence in split_sentences(block.text):
+            sentences_with_block.append((sentence, block))
+
+    if not sentences_with_block:
+        return []
+
+    chunks: list[Chunk] = []
+    bucket: list[tuple[Sentence, ParsedBlock]] = []
+    bucket_seconds = 0.0
+
+    for entry in sentences_with_block:
+        sentence_seconds = _read_seconds(entry[0].text, "paragraph", config)
+        if bucket and bucket_seconds + sentence_seconds > config.budget_seconds:
+            chunks.append(
+                _paragraph_run_chunk(bucket, config, position_offset + len(chunks))
+            )
+            bucket = []
+            bucket_seconds = 0.0
+        bucket.append(entry)
+        bucket_seconds += sentence_seconds
+
+    if bucket:
+        chunks.append(
+            _paragraph_run_chunk(bucket, config, position_offset + len(chunks))
+        )
+    return chunks
+
+
 def _paragraph_chunk(
     bucket: list[Sentence],
     block: ParsedBlock,
     config: ChunkingConfig,
     position: int,
 ) -> Chunk:
-    """Build a paragraph Chunk from a bucket of sentences within one block."""
+    """Build a paragraph Chunk from a bucket of sentences within one block.
+    Used by `_pack_sentences` (single-block path).  Cross-block bucketing
+    uses `_paragraph_run_chunk` below."""
     char_start = bucket[0].char_start
     char_end = bucket[-1].char_end
     text = block.text[char_start:char_end]
@@ -323,6 +366,50 @@ def _paragraph_chunk(
         position=position,
         source_offset_start=block.source_offset_start + char_start,
         source_offset_end=block.source_offset_start + char_end,
+        text=text,
+        lead_token_type="paragraph",
+        lead_heading_level=None,
+        estimated_read_seconds=_read_seconds(text, "paragraph", config),
+    )
+
+
+def _paragraph_run_chunk(
+    bucket: list[tuple[Sentence, ParsedBlock]],
+    config: ChunkingConfig,
+    position: int,
+) -> Chunk:
+    """Build a paragraph Chunk from sentences spanning multiple blocks.
+    Joins per-block slices with `\\n\\n` so the renderer treats them as
+    adjacent paragraphs (similar to `_heading_with_absorbed_chunk`'s
+    text/source-offset asymmetry — the chunk's text length intentionally
+    exceeds the source-offset span when bridging blocks)."""
+    parts: list[str] = []
+    current_block: ParsedBlock | None = None
+    block_sentences: list[Sentence] = []
+
+    def flush() -> None:
+        if current_block is not None and block_sentences:
+            slice_text = current_block.text[
+                block_sentences[0].char_start : block_sentences[-1].char_end
+            ]
+            parts.append(slice_text)
+
+    for sentence, block in bucket:
+        if block is not current_block:
+            flush()
+            current_block = block
+            block_sentences = [sentence]
+        else:
+            block_sentences.append(sentence)
+    flush()
+
+    text = "\n\n".join(parts)
+    first_sentence, first_block = bucket[0]
+    last_sentence, last_block = bucket[-1]
+    return Chunk(
+        position=position,
+        source_offset_start=first_block.source_offset_start + first_sentence.char_start,
+        source_offset_end=last_block.source_offset_start + last_sentence.char_end,
         text=text,
         lead_token_type="paragraph",
         lead_heading_level=None,

@@ -231,6 +231,103 @@ def test_absorbed_chunks_read_seconds_equals_sum_of_originals() -> None:
     assert combined_result.chunks[0].estimated_read_seconds == pytest.approx(expected)
 
 
+# Parsem-e9t — cross-paragraph packing.
+
+
+def test_two_short_consecutive_paragraphs_pack_into_one_chunk() -> None:
+    """Each paragraph alone is well under budget; together they still
+    fit, so they merge into one chunk."""
+    blocks = [
+        _block("paragraph", "Short paragraph one.", start=0),
+        _block("paragraph", "Short paragraph two.", start=30),
+    ]
+    result = chunk(blocks, ChunkingConfig())
+    assert len(result.chunks) == 1
+    assert "Short paragraph one." in result.chunks[0].text
+    assert "Short paragraph two." in result.chunks[0].text
+
+
+def test_cross_paragraph_chunk_joins_blocks_with_paragraph_break() -> None:
+    """Renderer needs blank-line separation between paragraphs so they
+    render as separate <p> elements."""
+    blocks = [
+        _block("paragraph", "First.", start=0),
+        _block("paragraph", "Second.", start=10),
+    ]
+    result = chunk(blocks, ChunkingConfig())
+    assert len(result.chunks) == 1
+    assert "First.\n\nSecond." in result.chunks[0].text
+
+
+def test_paragraph_run_splits_at_budget_boundary_never_mid_sentence() -> None:
+    """A run whose total word count exceeds the budget splits between
+    two whole sentences; sentences are never sliced."""
+    # Budget: 30s * 220 wpm / 60 = 110 words. Build sentences that fill
+    # past the budget across multiple paragraphs.
+    long_sentence = " ".join(["alpha"] * 60) + "."
+    blocks = [
+        _block("paragraph", long_sentence, start=0),
+        _block("paragraph", long_sentence, start=200),
+    ]
+    result = chunk(blocks, ChunkingConfig())
+    assert len(result.chunks) == 2
+    # Each chunk holds exactly one whole sentence — no splits.
+    assert result.chunks[0].text.endswith(".")
+    assert result.chunks[1].text.endswith(".")
+
+
+def test_paragraph_run_chunk_source_offset_spans_first_to_last_sentence() -> None:
+    blocks = [
+        _block("paragraph", "First.", start=10),
+        _block("paragraph", "Second.", start=50),
+    ]
+    result = chunk(blocks, ChunkingConfig())
+    assert len(result.chunks) == 1
+    assert result.chunks[0].source_offset_start == 10
+    assert result.chunks[0].source_offset_end == 50 + len("Second.")
+
+
+def test_non_paragraph_block_breaks_the_run() -> None:
+    """A list/heading/code/blockquote between paragraphs splits them
+    into separate runs, each packed independently."""
+    blocks = [
+        _block("paragraph", "Before list.", start=0),
+        _block("list_item", "- item\n", start=20),
+        _block("paragraph", "After list.", start=30),
+    ]
+    result = chunk(blocks, ChunkingConfig())
+    para_chunks = [c for c in result.chunks if c.lead_token_type == "paragraph"]
+    assert len(para_chunks) == 2
+    assert "Before list." in para_chunks[0].text
+    assert "After list." in para_chunks[1].text
+
+
+def test_three_paragraphs_under_budget_pack_into_one_chunk() -> None:
+    blocks = [
+        _block("paragraph", "One.", start=0),
+        _block("paragraph", "Two.", start=10),
+        _block("paragraph", "Three.", start=20),
+    ]
+    result = chunk(blocks, ChunkingConfig())
+    assert len(result.chunks) == 1
+    text = result.chunks[0].text
+    assert "One." in text and "Two." in text and "Three." in text
+
+
+def test_paragraph_run_chunk_word_count_equals_sum_of_originals() -> None:
+    """Word count is invariant: packed chunk's words equal the sum of
+    each paragraph's words (the `\\n\\n` separator adds no words)."""
+    blocks = [
+        _block("paragraph", "One two three.", start=0),
+        _block("paragraph", "Four five.", start=20),
+    ]
+    result = chunk(blocks, ChunkingConfig())
+    assert len(result.chunks) == 1
+    combined_words = len(result.chunks[0].text.split())
+    individual_words = sum(len(b.text.split()) for b in blocks)
+    assert combined_words == individual_words
+
+
 def test_absorption_works_for_ordered_lists_too() -> None:
     """Ordered list items use the same `list_item` block type — the
     rule applies regardless of bullet vs ordered."""
