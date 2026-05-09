@@ -136,6 +136,13 @@ body {
   position: relative;
   overflow-y: auto;
   overflow-x: hidden;
+  /* scrollbar-gutter: stable reserves the scrollbar's column on the
+   * right of .reader-scroll always — present whether or not the
+   * scrollbar is visible. Without this, the scrollbar lands on top
+   * of the right gutter's rating digits (claude-axx.3 UAT). With
+   * stable, the layout's right edge is to the LEFT of the scrollbar
+   * gutter, so digits and scrollbar can't overlap. */
+  scrollbar-gutter: stable;
 }
 
 .layout {

@@ -43,36 +43,41 @@
     return document.querySelector(".chunk--current");
   }
 
+  // The clamped scrollTop value that settleAtCurrent will use. Both
+  // ends of the range are clamped: scrollTop can't go below 0 (early
+  // in the doc the natural anchor target collapses), and the browser
+  // silently clamps scrollTop to scrollHeight - clientHeight at the
+  // bottom (so a chunk near the end can't reach the 70% anchor — the
+  // doc just runs out of space below it). Without the bottom clamp,
+  // isAtCanonical returns false forever near the end of the doc and
+  // every Space press triggers return-first instead of revealing
+  // (claude-axx.3 UAT — Space-at-end-of-doc regression).
+  function canonicalScrollTop(sc, cc) {
+    const target = ANCHOR_RATIO * sc.clientHeight;
+    const raw = cc.offsetTop + cc.offsetHeight - target;
+    const maxScroll = Math.max(0, sc.scrollHeight - sc.clientHeight);
+    return Math.min(maxScroll, Math.max(0, raw));
+  }
+
   // True when the actual scrollTop matches what settleAtCurrent would
   // set. Outside this band, the reader is "scrolled away" and action
   // keys should snap back instead of acting (§8.1 return-first).
-  //
-  // We can't anchor on "chunk bottom at 70%" alone: when the document
-  // is short or the current chunk is near the top, the desired scroll
-  // is clamped at 0 and the chunk simply can't reach 70%. The right
-  // canonical check is "scrollTop equals the clamped desired top."
   function isAtCanonical() {
     const sc = scrollContainer();
     const cc = currentChunk();
     if (!sc || !cc) return true;
-    const target = ANCHOR_RATIO * sc.clientHeight;
-    const desiredTop = Math.max(0, cc.offsetTop + cc.offsetHeight - target);
-    return Math.abs(sc.scrollTop - desiredTop) <= CANONICAL_TOLERANCE_PX;
+    return Math.abs(sc.scrollTop - canonicalScrollTop(sc, cc)) <= CANONICAL_TOLERANCE_PX;
   }
 
   // Smooth-scroll the reading viewport so the current chunk's bottom edge
-  // lands at the 70% anchor. behavior=auto on initial paint avoids the
-  // flash-from-zero; behavior=smooth on advances is the meditation-room beat.
+  // lands at the 70% anchor (or as close as the doc bounds permit).
+  // behavior=auto on initial paint avoids the flash-from-zero; smooth
+  // on advances is the meditation-room beat.
   function settleAtCurrent({ behavior = "smooth" } = {}) {
     const sc = scrollContainer();
     const cc = currentChunk();
     if (!sc || !cc) return;
-    const target = ANCHOR_RATIO * sc.clientHeight;
-    // Clamp at 0 — early in the doc the chunk's natural offset is less
-    // than the 70%-anchor target, so the scroll target collapses to 0
-    // and the chunk just sits at the top below the bar.
-    const top = Math.max(0, cc.offsetTop + cc.offsetHeight - target);
-    sc.scrollTo({ top, behavior });
+    sc.scrollTo({ top: canonicalScrollTop(sc, cc), behavior });
   }
 
   // Apply the server's partial fragment surgically. Three goals:
@@ -283,17 +288,16 @@
     // Rating button click — pointer-mode peer of the 1-5 keypress
     // (§8a.1, claude-axx.3 UAT). Free, never advances. Bypasses
     // return-first per §8a.3 (a click is itself the attention
-    // signal). settle: false because /rate doesn't move
-    // current_position — there's nothing new to anchor on.
+    // signal). settle defaults to true so the next Space press
+    // doesn't get eaten by §8.1 return-first when the rating click
+    // happens slightly off-canonical — a no-op when already at
+    // canonical, a tiny smooth-scroll otherwise.
     const ratingButton = event.target.closest(".rating-button");
     if (ratingButton) {
       const rating = parseInt(ratingButton.dataset.rating, 10);
       if (!Number.isNaN(rating)) {
         event.preventDefault();
-        performAction(
-          { method: "POST", url: "/rate", body: { rating } },
-          { settle: false },
-        );
+        performAction({ method: "POST", url: "/rate", body: { rating } });
       }
       return;
     }
