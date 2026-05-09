@@ -11,7 +11,7 @@ Synchronous ingestion pipeline:
 
 Empty markdown and parse exceptions are caught and recorded as
 status='failed' with a `failure_reason`; the user is redirected to
-`/` (which redirects to `/upload` until 3z8 ships the library).
+`/library` so the failed-row stays visible in context.
 """
 
 from __future__ import annotations
@@ -82,13 +82,13 @@ async def post_upload(
         mark_document_failed(
             conn, document_id, reason=f"Parse failed: {exc}", now=now
         )
-        return RedirectResponse(url="/", status_code=302)
+        return RedirectResponse(url="/library", status_code=302)
 
     if not output.chunks:
         mark_document_failed(
             conn, document_id, reason="Document is empty.", now=now
         )
-        return RedirectResponse(url="/", status_code=302)
+        return RedirectResponse(url="/library", status_code=302)
 
     insert_chunks_and_sections(
         conn,

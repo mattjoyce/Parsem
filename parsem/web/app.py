@@ -10,6 +10,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from parsem.web.routes.library import router as library_router
 from parsem.web.routes.reader import router as reader_router
 from parsem.web.routes.upload import router as upload_router
 from parsem.web.state import ReaderState
@@ -37,14 +38,13 @@ def create_app(
     app.state.db = db
     app.state.originals_dir = originals_dir
     app.state.templates = Jinja2Templates(directory=_TEMPLATES_DIR)
+    app.include_router(library_router)
     app.include_router(reader_router)
     app.include_router(upload_router)
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
     @app.get("/")
     def root() -> RedirectResponse:
-        # Until 3z8 (library) lands, "/" is the upload form. After 3z8
-        # it'll redirect to /library instead.
-        return RedirectResponse(url="/upload", status_code=302)
+        return RedirectResponse(url="/library", status_code=302)
 
     return app

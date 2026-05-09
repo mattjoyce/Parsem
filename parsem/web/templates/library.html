@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Parsem — Library</title>
+  <link rel="stylesheet" href="/static/reader.css">
+</head>
+<body>
+<main class="library-page">
+  <header class="library-header">
+    <h1>Library</h1>
+    <a class="library-upload-link" href="/upload">Upload</a>
+  </header>
+  {% if docs %}
+  <table class="library">
+    <thead>
+      <tr>
+        <th class="library-col-title">Title</th>
+        <th class="library-col-status">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for doc in docs %}
+      <tr>
+        <td class="library-col-title">
+          <a href="/documents/{{ doc.id }}/reader">{{ doc.title }}</a>
+        </td>
+        <td class="library-col-status library-status-{{ doc.status }}">
+          {{ doc.status }}{% if doc.status == "failed" and doc.failure_reason %}
+          <span class="library-failure-reason">— {{ doc.failure_reason }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="library-empty">
+    No documents yet. <a href="/upload">Upload</a> a Markdown file to begin.
+  </p>
+  {% endif %}
+</main>
+</body>
+</html>

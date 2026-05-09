@@ -218,6 +218,39 @@ def load_document(conn: sqlite3.Connection, document_id: int) -> Document | None
     )
 
 
+def list_documents_for_library(conn: sqlite3.Connection) -> list[Document]:
+    """All documents ordered by last-opened DESC (reading_state.updated_at),
+    falling back to created_at when a document has never been opened, with
+    a stable secondary sort by title. Spec §9.1, bead Parsem-3z8.
+
+    The LEFT JOIN avoids dropping never-opened documents from the listing.
+    Sorting in SQL keeps the route handler dumb — it just renders.
+    """
+    rows = conn.execute(
+        "SELECT d.id, d.title, d.source_type, d.original_path, d.status,"
+        " d.failure_reason, d.total_chunks, d.preference_overrides_json,"
+        " d.created_at, d.updated_at"
+        " FROM documents d"
+        " LEFT JOIN reading_state rs ON rs.document_id = d.id"
+        " ORDER BY COALESCE(rs.updated_at, d.created_at) DESC, d.title ASC"
+    ).fetchall()
+    return [
+        Document(
+            id=row["id"],
+            title=row["title"],
+            source_type=row["source_type"],
+            original_path=row["original_path"],
+            status=row["status"],
+            failure_reason=row["failure_reason"],
+            total_chunks=row["total_chunks"],
+            preference_overrides_json=row["preference_overrides_json"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+        for row in rows
+    ]
+
+
 def load_chunks_for_document(conn: sqlite3.Connection, document_id: int) -> list[Chunk]:
     rows = conn.execute(
         "SELECT position, source_offset_start, source_offset_end, text,"

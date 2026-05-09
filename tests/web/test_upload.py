@@ -47,13 +47,13 @@ def test_get_upload_returns_200_with_form(
     assert 'name="file"' in response.text
 
 
-def test_root_redirects_to_upload(
+def test_root_redirects_to_library(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
     client, _, _ = fresh_app
     response = client.get("/", follow_redirects=False)
     assert response.status_code == 302
-    assert response.headers["location"] == "/upload"
+    assert response.headers["location"] == "/library"
 
 
 def test_post_upload_persists_file_to_originals_dir(
@@ -105,7 +105,7 @@ def test_post_upload_empty_markdown_marks_failed_with_reason(
         follow_redirects=False,
     )
     assert response.status_code == 302
-    assert response.headers["location"] == "/"
+    assert response.headers["location"] == "/library"
     doc = load_document(conn, document_id=1)
     assert doc is not None
     assert doc.status == "failed"
