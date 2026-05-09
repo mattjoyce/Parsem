@@ -342,7 +342,7 @@ The economy paces advancement through a **per-document** token bucket.
 ### 12.1 Tokens, capacity, and regen
 
 - `bucket.capacity` is **fixed at 5**. It is not exposed in the settings UI. Pace tuning happens via WPM scalers and `regen_seconds`, never via capacity. The cap is opinionated — five is the upper limit of glanceable subitization, and a higher cap would weaken the deliberate-friction thesis (§2). The valve has a fixed throat; only the regen rate moves.
-- `bucket.regen_seconds` (default 12; the user's pace knob) is the regen interval.
+- `bucket.regen_seconds` (default 6; the user's pace knob) is the regen interval. Earlier 12s default jammed too easily for natural reading pace at 30s prose budgets — UAT (claude-axx) showed the bucket draining faster than it filled.
 - `bucket.start_full = true` — opening a document gives the reader a full bucket.
 
 ### 12.2 Computed, not stored

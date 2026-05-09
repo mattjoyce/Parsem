@@ -16,7 +16,15 @@ from typing import Literal
 from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
-BlockType = Literal["heading", "paragraph", "list_item", "code", "blockquote", "table"]
+BlockType = Literal[
+    "heading",
+    "paragraph",
+    "list_item",
+    "code",
+    "blockquote",
+    "table",
+    "horizontal_rule",
+]
 
 
 @dataclass(frozen=True)
@@ -30,7 +38,9 @@ class ParsedBlock:
     source_offset_end: int
 
 
-# Map markdown-it-py token types to our BlockType.
+# Map markdown-it-py token types to our BlockType. The "open" suffix
+# matches container tokens (heading_open ... heading_close); leaf tokens
+# like fence and hr have no close pair and are mapped directly.
 _OPEN_TOKEN_TYPES: dict[str, BlockType] = {
     "heading_open": "heading",
     "paragraph_open": "paragraph",
@@ -39,6 +49,7 @@ _OPEN_TOKEN_TYPES: dict[str, BlockType] = {
     "code_block": "code",
     "blockquote_open": "blockquote",
     "table_open": "table",
+    "hr": "horizontal_rule",
 }
 
 # Block types that "absorb" their inner content — children are not emitted

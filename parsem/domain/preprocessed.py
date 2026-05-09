@@ -31,7 +31,9 @@ class ReadingRules:
     wpm_user_scaling: float = 1.0
 
 
-_STRUCTURAL_ATOMIC_KINDS = frozenset({"code_block", "list_run", "list_item", "blockquote", "table"})
+_STRUCTURAL_ATOMIC_KINDS = frozenset({
+    "code_block", "list_run", "list_item", "blockquote", "table", "horizontal_rule",
+})
 
 
 @dataclass(frozen=True)
@@ -47,6 +49,7 @@ class PreprocessedPiece:
     is_blockquote: bool
     is_list: bool
     is_list_run: bool
+    is_horizontal_rule: bool
     is_structural_atomic: bool
     is_colon_terminated: bool
 
@@ -68,10 +71,18 @@ def _preprocess(piece: AtomicPiece, rules: ReadingRules) -> PreprocessedPiece:
     is_list_run = piece.kind == "list_run"
     is_list_item = piece.kind == "list_item"
     is_list = is_list_run or is_list_item
+    is_horizontal_rule = piece.kind == "horizontal_rule"
     is_structural_atomic = piece.kind in _STRUCTURAL_ATOMIC_KINDS
-    is_colon_terminated = piece.text_snapshot.rstrip().endswith(":")
+    # Don't ask "does '---' end with ':'?" — HR is purely visual.
+    is_colon_terminated = (
+        not is_horizontal_rule and piece.text_snapshot.rstrip().endswith(":")
+    )
 
     if is_heading and rules.heading_cost == "zero":
+        read_seconds = 0.0
+    elif is_horizontal_rule:
+        # HR is a visual break with no prose to read. Zero cost so it
+        # never consumes the prose budget.
         read_seconds = 0.0
     else:
         wpm = rules.code_wpm if is_code else rules.prose_wpm
@@ -88,6 +99,7 @@ def _preprocess(piece: AtomicPiece, rules: ReadingRules) -> PreprocessedPiece:
         is_blockquote=is_blockquote,
         is_list=is_list,
         is_list_run=is_list_run,
+        is_horizontal_rule=is_horizontal_rule,
         is_structural_atomic=is_structural_atomic,
         is_colon_terminated=is_colon_terminated,
     )

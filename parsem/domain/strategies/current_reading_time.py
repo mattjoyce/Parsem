@@ -64,15 +64,19 @@ def _plan(
         bucket = []
         bucket_seconds = 0.0
 
-    def absorb_colon_lead_in_into_list(list_run: PreprocessedPiece) -> bool:
-        """If the most recently emitted chunk's lead/trailing piece is a
-        colon-terminated sentence, fold it (and any other sentences in
-        that chunk) into a new list_with_colon_lead_in chunk that also
-        contains `list_run`. Returns True on success.
+    def absorb_colon_lead_in_into_block(structural: PreprocessedPiece) -> bool:
+        """If the most recently emitted chunk's last piece is a colon-
+        terminated sentence, fold that whole chunk into a new
+        list_with_colon_lead_in chunk that also contains `structural`.
 
-        Mirrors `_pop_colon_lead_in` from the legacy chunker: the rule
-        keys on the LAST chunk's text ending with ':', which equates to
-        the chunk's last piece being colon-terminated."""
+        Generalised in claude-axx.2: the rule fires for *any* structural
+        atomic block (code, list_run, blockquote, table) — not just
+        list_run. Pedagogical coupling beats tidy budget split. HR is
+        excluded by the caller (a thematic break has nothing to absorb
+        into).
+
+        Returns True on a successful merge.
+        """
         if rules.structural_rules.list_lead_in != "colon_previous_paragraph":
             return False
         if not chunks:
@@ -84,10 +88,9 @@ def _plan(
             return False
         if not prev_last_piece.is_colon_terminated:
             return False
-        # Pop the previous chunk and re-emit with the list_run appended.
         chunks.pop()
-        merged_ords = [*prev.piece_ordinals, list_run.piece.ordinal]
-        merged_seconds = prev.estimated_read_seconds + list_run.estimated_read_seconds
+        merged_ords = [*prev.piece_ordinals, structural.piece.ordinal]
+        merged_seconds = prev.estimated_read_seconds + structural.estimated_read_seconds
         chunks.append(PlannedChunk(
             ordinal=len(chunks),
             piece_ordinals=merged_ords,
@@ -99,11 +102,13 @@ def _plan(
 
     for piece in preprocessed:
         if piece.is_structural_atomic and not piece.is_heading:
-            # code_block, list_run, list_item (when atomicity=item),
-            # blockquote, table — each is one chunk. Colon-leadin merge
-            # only applies to list_run.
+            # code_block, list_run, list_item, blockquote, table,
+            # horizontal_rule — each is one chunk. Colon-lead-in merge
+            # applies to all of these except HR (a thematic break has
+            # no content to absorb into); claude-axx.2 generalised the
+            # rule beyond list_run.
             flush("prose_budget")
-            if piece.is_list_run and absorb_colon_lead_in_into_list(piece):
+            if not piece.is_horizontal_rule and absorb_colon_lead_in_into_block(piece):
                 continue
             chunks.append(_make_planned_chunk(
                 ordinal=len(chunks),

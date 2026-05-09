@@ -33,6 +33,7 @@ PieceKind = Literal[
     "list_run",
     "blockquote",
     "table",
+    "horizontal_rule",
 ]
 
 
@@ -134,7 +135,14 @@ def build_atomic_pieces(
                 line_index=line_index,
             ))
             block_index += 1
-        else:  # pragma: no cover — markdown_parse currently emits only the 6 known types
+        elif block.type == "horizontal_rule":
+            pieces.append(_make_block_piece(
+                block, kind="horizontal_rule", ordinal=len(pieces),
+                source_block_index=block_index, ordinal_in_block=0,
+                line_index=line_index,
+            ))
+            block_index += 1
+        else:  # pragma: no cover — markdown_parse emits only the known types
             raise ValueError(f"unknown block type: {block.type}")
 
     return pieces

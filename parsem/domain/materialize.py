@@ -60,6 +60,7 @@ _PIECE_KIND_TO_BLOCK_TYPE: dict[PieceKind, BlockType] = {
     "list_run": "list_item",
     "blockquote": "blockquote",
     "table": "table",
+    "horizontal_rule": "horizontal_rule",
 }
 
 

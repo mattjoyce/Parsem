@@ -208,6 +208,93 @@ def test_blockquote_is_its_own_chunk() -> None:
     assert "a quote" in bq[0].text
 
 
+# --- horizontal rules (claude-axx.5) ---------------------------------------
+
+
+def test_horizontal_rule_becomes_its_own_piece_and_chunk() -> None:
+    text = "Before.\n\n---\n\nAfter.\n"
+    pieces, _, _, chunks, _ = _run(text)
+    hr_pieces = [p for p in pieces if p.kind == "horizontal_rule"]
+    assert len(hr_pieces) == 1
+    hr_chunks = [c for c in chunks if c.lead_token_type == "horizontal_rule"]
+    assert len(hr_chunks) == 1
+    assert hr_chunks[0].text.strip() == "---"
+
+
+def test_horizontal_rule_does_not_absorb_colon_lead_in() -> None:
+    """An HR is a visual break; absorbing prose into it would be wrong.
+    Even if the previous prose ends in ':', the HR stays its own chunk."""
+    text = "List below:\n\n---\n\nMore.\n"
+    _, _, _, chunks, _ = _run(text)
+    kinds = [c.lead_token_type for c in chunks]
+    assert "horizontal_rule" in kinds
+    hr = next(c for c in chunks if c.lead_token_type == "horizontal_rule")
+    assert "List below" not in hr.text  # not absorbed
+
+
+def test_horizontal_rule_zero_read_time() -> None:
+    text = "---\n"
+    _, preprocessed, _, _, _ = _run(text)
+    assert all(p.estimated_read_seconds == 0.0 for p in preprocessed)
+
+
+def test_horizontal_rule_does_not_start_a_section() -> None:
+    text = "Prologue.\n\n---\n\nMore prose.\n"
+    _, _, _, chunks, _ = _run(text)
+    sections = derive_sections(chunks)
+    # No headings -> exactly one prologue section covering all chunks.
+    assert len(sections) == 1
+    assert sections[0].heading_chunk_position is None
+
+
+# --- generalised colon lead-in (claude-axx.2) -----------------------------
+
+
+def test_colon_lead_in_absorbs_into_code_block() -> None:
+    text = "Run this:\n\n```\nprint(1)\n```\n"
+    _, _, _, chunks, _ = _run(text)
+    assert len(chunks) == 1
+    assert "Run this:" in chunks[0].text
+    assert "print(1)" in chunks[0].text
+
+
+def test_colon_lead_in_absorbs_into_blockquote() -> None:
+    text = "Aristotle wrote:\n\n> a famous line.\n"
+    _, _, _, chunks, _ = _run(text)
+    assert len(chunks) == 1
+    assert "Aristotle wrote:" in chunks[0].text
+    assert "a famous line" in chunks[0].text
+
+
+def test_colon_lead_in_absorbs_into_table() -> None:
+    text = (
+        "As shown below:\n"
+        "\n"
+        "| col | data |\n"
+        "| --- | ---- |\n"
+        "| a   | 1    |\n"
+    )
+    _, _, _, chunks, _ = _run(text)
+    assert len(chunks) == 1
+    assert "As shown below:" in chunks[0].text
+    assert "| col" in chunks[0].text
+
+
+def test_colon_lead_in_does_not_absorb_into_horizontal_rule() -> None:
+    """HR is excluded from the generalised colon-lead-in rule (claude-axx.2)
+    — there's no content to anchor onto."""
+    text = "End of section:\n\n---\n\nNext section.\n"
+    _, _, _, chunks, _ = _run(text)
+    # Prose chunk separate from HR chunk
+    leads = [c.lead_token_type for c in chunks]
+    assert leads.count("horizontal_rule") == 1
+    # The colon prose stays a paragraph chunk on its own (or packed with
+    # following prose), not merged with the HR.
+    hr_idx = leads.index("horizontal_rule")
+    hr = chunks[hr_idx]
+    assert "End of section" not in hr.text
+
+
 # --- materialization invariants --------------------------------------------
 
 

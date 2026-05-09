@@ -28,7 +28,7 @@ class BucketConfig:
     """
 
     capacity: int = 5
-    regen_seconds: int = 12
+    regen_seconds: int = 6
     start_full: bool = True
     fresh_session_idle_multiplier: int = 5
 
