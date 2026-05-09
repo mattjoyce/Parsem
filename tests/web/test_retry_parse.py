@@ -200,3 +200,171 @@ def test_ready_row_does_not_render_retry_button(
     )
     body = client.get("/library").text
     assert "library-retry" not in body
+
+
+# ─── Reading-state re-anchor on new chunking_run (claude-jtu) ─────────
+
+
+def _seed_ready_with_state(
+    conn: sqlite3.Connection,
+    originals: Path,
+    *,
+    body: str,
+    current: int,
+    high_water: int,
+) -> int:
+    """Insert a 'ready' document with a real chunking_run AND a
+    reading_state row at (current, high_water). For testing re-anchor
+    on retry-parse — we need the substrate present before the wipe."""
+    from parsem.web.ingest import parse_and_persist
+
+    doc_id = insert_document(
+        conn,
+        title="ready-with-state",
+        original_path="placeholder",
+        status="failed",
+        now=T0,
+    )
+    file_path = originals / f"{doc_id}.md"
+    file_path.write_text(body, encoding="utf-8")
+    conn.execute(
+        "UPDATE documents SET original_path=? WHERE id=?",
+        (str(file_path), doc_id),
+    )
+    conn.commit()
+    assert parse_and_persist(conn, document_id=doc_id, text=body, now=T0)
+    conn.execute(
+        "INSERT INTO reading_state (document_id, current_position,"
+        " high_water_position, updated_at) VALUES (?, ?, ?, ?)",
+        (doc_id, current, high_water, T0.isoformat()),
+    )
+    conn.commit()
+    return doc_id
+
+
+def _read_reading_state(conn: sqlite3.Connection, doc_id: int) -> tuple[int, int]:
+    row = conn.execute(
+        "SELECT current_position, high_water_position FROM reading_state"
+        " WHERE document_id=?",
+        (doc_id,),
+    ).fetchone()
+    assert row is not None
+    return row["current_position"], row["high_water_position"]
+
+
+def test_retry_preserves_reading_state_when_content_unchanged(
+    app_ctx: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """Re-running the parse with byte-identical content gives an
+    identical chunking — re-anchor should land every old position
+    exactly on its new namesake. Reading state is preserved."""
+    client, conn, originals = app_ctx
+    body = (
+        "# Title\n\n"
+        "First paragraph here.\n\n"
+        "Second paragraph here.\n\n"
+        "## Section\n\n"
+        "Third paragraph.\n\n"
+        "Fourth paragraph.\n"
+    )
+    doc_id = _seed_ready_with_state(
+        conn, originals, body=body, current=0, high_water=1
+    )
+    before = _read_reading_state(conn, doc_id)
+    client.post(f"/documents/{doc_id}/retry-parse")
+    after = _read_reading_state(conn, doc_id)
+    assert after == before, (
+        f"identical-content re-parse should preserve reading state; "
+        f"before={before} after={after}"
+    )
+
+
+def test_retry_with_no_reading_state_is_silent_noop(
+    app_ctx: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """A doc whose user has never opened it has no reading_state row.
+    Re-anchor must NOT create one — it's a no-op for that case
+    (matches the spec §18.5 invariant: reading_state is materialised
+    on first GET /reader, not earlier)."""
+    client, conn, originals = app_ctx
+    doc_id = _seed_failed(conn, originals)
+    client.post(f"/documents/{doc_id}/retry-parse")
+    row = conn.execute(
+        "SELECT 1 FROM reading_state WHERE document_id=?", (doc_id,)
+    ).fetchone()
+    assert row is None
+
+
+def test_retry_with_no_prior_chunks_does_not_crash(
+    app_ctx: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """A doc that's never successfully parsed has no chunks to
+    capture pre-wipe — old_chunk_piece_hashes is empty and
+    re-anchor short-circuits. Sanity: this path doesn't blow up
+    even when reading_state happens to exist (defensive)."""
+    client, conn, originals = app_ctx
+    doc_id = _seed_failed(conn, originals)
+    # Inject a stray reading_state row (shouldn't happen normally
+    # without chunks, but defends against drift).
+    conn.execute(
+        "INSERT INTO reading_state (document_id, current_position,"
+        " high_water_position, updated_at) VALUES (?, 0, 0, ?)",
+        (doc_id, T0.isoformat()),
+    )
+    conn.commit()
+    client.post(f"/documents/{doc_id}/retry-parse")
+    # Reading state row still exists, untouched by re-anchor (no
+    # old chunks to anchor from).
+    row = conn.execute(
+        "SELECT current_position, high_water_position FROM reading_state"
+        " WHERE document_id=?",
+        (doc_id,),
+    ).fetchone()
+    assert row is not None
+    assert row["current_position"] == 0
+    assert row["high_water_position"] == 0
+
+
+def test_retry_clamps_current_to_high_water_on_inversion(
+    app_ctx: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """Defensive clamp: even if the re-anchor produces new_current
+    greater than new_high_water (pathological strategy change),
+    current is pulled back to high_water. Same body re-parse can't
+    actually trigger this in practice, so this test sets up the
+    inverted state directly and asserts the clamp via the primitive."""
+    from parsem.store.projections_cache import reanchor_reading_state
+
+    _client, conn, originals = app_ctx
+    body = (
+        "# Title\n\n"
+        "First paragraph here.\n\n"
+        "Second paragraph here.\n\n"
+        "## Section\n\n"
+        "Third paragraph.\n\n"
+        "Fourth paragraph.\n"
+    )
+    # Seed reading_state where current > high_water — invalid combo
+    # but the right shape to verify the clamp. Both positions in
+    # range (the body produces 2 chunks; current=1, hw=0 gives an
+    # in-range inversion).
+    doc_id = _seed_ready_with_state(
+        conn, originals, body=body, current=1, high_water=0
+    )
+    # Re-anchor in-place against the SAME chunking_run (no wipe).
+    # Old hashes equal new hashes → every position re-anchors to
+    # itself → new_current=2, new_high_water=0 → clamp to 0.
+    from parsem.store.projections_cache import (
+        get_chunk_piece_hashes_for_document,
+    )
+
+    old_hashes = get_chunk_piece_hashes_for_document(conn, doc_id)
+    reanchor_reading_state(
+        conn,
+        document_id=doc_id,
+        old_chunks_piece_hashes=old_hashes,
+        now=T0,
+    )
+    conn.commit()
+    cur, hw = _read_reading_state(conn, doc_id)
+    assert cur == hw == 0

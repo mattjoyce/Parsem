@@ -29,6 +29,10 @@ from parsem.store.documents import (
     progress_percent_for_document,
     rename_document,
 )
+from parsem.store.projections_cache import (
+    get_chunk_piece_hashes_for_document,
+    reanchor_reading_state,
+)
 from parsem.web.ingest import parse_and_persist
 from parsem.web.state import empty_reader_state
 
@@ -130,6 +134,19 @@ def post_retry_parse(document_id: int, request: Request) -> RedirectResponse:
         return RedirectResponse(url="/library", status_code=302)
 
     text = file_path.read_text(encoding="utf-8")
+    # Capture the OLD chunks' piece-hash sets BEFORE the wipe — needed
+    # to re-anchor reading_state after the new chunking_run lands
+    # (claude-jtu). Empty list when the doc has never been parsed
+    # successfully (no prior chunks); reanchor below short-circuits.
+    old_chunk_piece_hashes = get_chunk_piece_hashes_for_document(conn, document_id)
     delete_document_chunks_and_sections(conn, document_id)
-    parse_and_persist(conn, document_id=document_id, text=text, now=now)
+    success = parse_and_persist(conn, document_id=document_id, text=text, now=now)
+    if success and old_chunk_piece_hashes:
+        reanchor_reading_state(
+            conn,
+            document_id=document_id,
+            old_chunks_piece_hashes=old_chunk_piece_hashes,
+            now=now,
+        )
+        conn.commit()
     return RedirectResponse(url="/library", status_code=302)

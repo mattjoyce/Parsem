@@ -35,6 +35,7 @@ from parsem.domain.projections import (
     empty_reading_state,
     resume_position,
 )
+from parsem.domain.reanchor import best_chunk_by_jaccard
 from parsem.store.events import (
     EventLog,
     ReadingEvent,
@@ -307,6 +308,102 @@ def _insert_chunk_level_pin(
         "  chunk_id_end, word_end, color_id, created_at)"
         " VALUES (?, ?, 0, ?, -1, ?, ?)",
         (document_id, chunk_db_id, chunk_db_id, color, created_at.isoformat()),
+    )
+
+
+# ─── Reading-state re-anchor on new chunking_run (claude-jtu) ─────────
+
+
+def get_chunk_piece_hashes_for_document(
+    conn: sqlite3.Connection, document_id: int
+) -> list[frozenset[str]]:
+    """Return each chunk's piece text-hash set, in position order, for
+    the LATEST chunking_run of `document_id`. Used by re-anchor logic
+    on re-chunk to map old positions to new positions (claude-jtu).
+
+    Returns an empty list when the document has no chunking_run yet
+    (fresh upload that hasn't been parsed). The list is dense — index
+    i is the chunk at position i. Empty inner sets are possible but
+    unusual (a chunk with no pieces is malformed)."""
+    run_row = conn.execute(
+        "SELECT cr.id FROM chunking_runs cr"
+        " JOIN document_revisions dr ON dr.id = cr.revision_id"
+        " WHERE dr.document_id = ? ORDER BY cr.id DESC LIMIT 1",
+        (document_id,),
+    ).fetchone()
+    if run_row is None:
+        return []
+    rows = conn.execute(
+        "SELECT c.position, ap.text_hash"
+        " FROM chunks c"
+        " JOIN chunk_pieces cp ON cp.chunk_id = c.id"
+        " JOIN atomic_pieces ap ON ap.id = cp.piece_id"
+        " WHERE c.chunking_run_id = ?"
+        " ORDER BY c.position",
+        (run_row["id"],),
+    ).fetchall()
+    by_pos: dict[int, set[str]] = {}
+    for row in rows:
+        by_pos.setdefault(row["position"], set()).add(row["text_hash"])
+    if not by_pos:
+        return []
+    max_pos = max(by_pos.keys())
+    return [frozenset(by_pos.get(i, set())) for i in range(max_pos + 1)]
+
+
+def reanchor_reading_state(
+    conn: sqlite3.Connection,
+    *,
+    document_id: int,
+    old_chunks_piece_hashes: list[frozenset[str]],
+    now: datetime,
+) -> None:
+    """Re-anchor `reading_state.current_position` and `high_water_position`
+    after a new chunking_run for this document. Maps each old position
+    onto the new run via Jaccard against piece-hash sets (claude-z99).
+
+    Falls back to 0 when an old position has no anchor in the new run
+    (content vanished or moved beyond recognition). Clamps current to
+    high_water on order inversion — chunks normally stay in source
+    order across re-chunks, but a defensive clamp protects against
+    pathological strategy changes.
+
+    No-op when no `reading_state` row exists for this document (fresh
+    parse with no prior reading), or when the new run produced no
+    chunks (caller should have caught that earlier; defensive).
+
+    Caller commits — this function does NOT commit.
+    """
+    row = conn.execute(
+        "SELECT current_position, high_water_position FROM reading_state"
+        " WHERE document_id=?",
+        (document_id,),
+    ).fetchone()
+    if row is None:
+        return
+    new_chunks_piece_hashes = get_chunk_piece_hashes_for_document(conn, document_id)
+    if not new_chunks_piece_hashes:
+        return
+
+    def reanchor_position(old_pos: int) -> int:
+        if old_pos < 0 or old_pos >= len(old_chunks_piece_hashes):
+            return 0
+        target = best_chunk_by_jaccard(
+            old_chunks_piece_hashes[old_pos], new_chunks_piece_hashes
+        )
+        return target if target is not None else 0
+
+    new_current = reanchor_position(row["current_position"])
+    new_hw = reanchor_position(row["high_water_position"])
+    # Defensive order clamp — chunks normally stay in source order
+    # across re-chunks, but pathological strategy changes could invert.
+    if new_current > new_hw:
+        new_current = new_hw
+
+    conn.execute(
+        "UPDATE reading_state SET current_position=?, high_water_position=?,"
+        " updated_at=? WHERE document_id=?",
+        (new_current, new_hw, now.isoformat(), document_id),
     )
 
 
