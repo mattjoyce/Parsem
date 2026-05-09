@@ -1,8 +1,10 @@
 # Parsem Project Specification
 
-> **Version:** Post-grill final, 2026-05-07.
+> **Version:** Post-grill final, 2026-05-07. Reconciled with Phase 1+2 implementation 2026-05-09 (Parsem-ngz).
 > **Predecessor:** `parsem-spec-draft.md` (preserved for diffing).
 > **Scope:** Self-hosted, single-user, local-first deep-reading app for Markdown documents.
+>
+> **Reading order for agents:** sections describe the *shipped* product where Phase 1+2 has landed, and the *aspirational* product elsewhere. Look for `Phase 3`, `not yet implemented`, or roadmap-only callouts. The deliberate deviations from the original 2026-05-07 spec are catalogued in §27.
 
 ---
 
@@ -159,12 +161,13 @@ Keyboard is the primary reading mode. Mouse/touch may mirror these later but the
 | Backspace | Conceal current chunk (retreat by one)  |
 | 1–5       | Rate effort on current chunk            |
 | P         | Pin / cycle pin colour                  |
-| `]` / `[` | Next / previous pin of active colour    |
-| Shift+Up  | Expand windowed review (Esc to exit)    |
-| `'`       | Return to pre-jump position             |
-| `,`       | Open settings panel (Esc to close)      |
-| `:`       | Open pin colour labels (Esc to close)   |
-| `?`       | Show cheat-sheet overlay (Esc to close); also reserved for Ask placeholder |
+| `]` / `[` | Scroll to next / previous pin (any colour; Parsem-bwz) |
+| `}` / `{` | Scroll to next / previous pin of the SAME colour as the current chunk's pin (no-op when current chunk has no pin; Parsem-bwz) |
+| Shift+Up  | Toggle review-mode dim (Esc to exit)    |
+| `'`       | Return to canonical anchor (current chunk at 70%) |
+| `,`       | Open settings panel (Esc to close) — *Phase 3* |
+| `:`       | Open pin colour labels (Esc to close) — *Phase 3* |
+| `?`       | Show cheat-sheet overlay (Esc to close) — *Phase 3* |
 | Esc       | Close panel / focus mode                |
 
 ### 8.1 Return-first rule
@@ -225,7 +228,7 @@ The **top bar** carries global session context — document title, progress (a f
 
 The **reading viewport** is the scrollable element that contains the main column and excludes the top bar — typically a `<div class="reader-scroll">` wrapping the partial fragment. The main column is anchored within the reading viewport so that the **current chunk's bottom edge sits at ~70% of the viewport's height**. The bottom 30% is a **preview gutter**: it renders the next chunk in a blurred, slightly faded state (~5px blur, opacity ~0.6 with a subtle continuous pulse). The preview is preparation, not a tease — it lets the eye anticipate what is coming without permitting the reader to actually read ahead. On reveal, the preview's blur lifts and its opacity climbs while the column smooth-scrolls upward to bring the new current chunk to the same 70% anchor.
 
-Above the current chunk, the main column shows a windowed view of the last `window_k − 1` settled chunks (default 4 — see §15), faded to 70% opacity, so 5 chunks total are visible: 4 settled + 1 current. A subtle 2px left-border accent marks the current chunk. Below the current chunk and above the preview gutter, a soft rating prompt `1 · 2 · 3 · 4 · 5` is always visible.
+Above the current chunk, the main column shows the **full revealed history** as rendered HTML (Parsem-kli growing-document model — see §15). All settled chunks remain visible; the current chunk is marked with a 2px left-border accent in the gutter. Below the current chunk and above the preview gutter, a soft rating prompt `1 · 2 · 3 · 4 · 5` is always visible.
 
 The **left gutter** shows pin colour dots aligned with each chunk.
 
@@ -259,9 +262,13 @@ The model has no full-document AST. The Markdown parser produces a token stream 
 
 The chunker is a pure function: `chunker(token_stream, config) → chunks + sections`.
 
-### 11.1 The 10-second budget rule
+### 11.1 The budget rule
 
 A chunk is filled greedily with whole sentences until the next sentence would exceed the **`chunking.budget_seconds`** budget at the configured WPM. Round down — never split a sentence.
+
+Sentences pack **across paragraph boundaries** within a run of consecutive paragraph blocks. Two short paragraphs that together fit the budget produce one chunk; the rendered text joins them with a paragraph break (`\n\n`) so the markdown renderer treats them as adjacent `<p>` elements. A non-paragraph block (heading, list, code, blockquote, table) ends the run.
+
+> Default is **30s** at 220 wpm ≈ 110 words ≈ comfortably one or two paragraphs (Parsem-ew8). The earlier 10s default produced sub-paragraph chunks that read like Powerpoint.
 
 ### 11.2 Heading absorption
 
@@ -270,10 +277,11 @@ A heading chunk **absorbs forward** sentences from the body following it, up to 
 ### 11.3 Structural blocks
 
 - **Code blocks** are one chunk regardless of length when `chunking.code_handling = block`. Read time is estimated at the `read_wpm_code` rate (slower than prose). Token cost stays 1. When `code_handling = prose`, code is sentence-split and packed like prose.
-- **Lists**: each item is one chunk when `chunking.list_handling = item`. When `block`, the whole list is one chunk; when `prose`, list items are joined and packed like prose.
+- **Lists**: each item is one chunk when `chunking.list_handling = item`. When `block` (default — Parsem-ew8), the whole list is one chunk; when `prose`, list items are joined and packed like prose.
 - **Blockquotes** are one chunk regardless of length.
 - **Tables** are one chunk regardless of length.
 - **Horizontal rules**, **image syntax**, blank lines are not chunked (skipped during chunking).
+- **Colon-terminated lead-in absorption** (Parsem-5lx): when a paragraph chunk's trimmed text ends with `:` AND the next blocks form a `list_item` run, the paragraph is absorbed into the merged list chunk (text prepended, `lead_token_type` stays `list_item`). The lead-in and the enumeration it introduces read as one unit. Behind `chunking.absorb_colon_lead_in` (default `true`).
 
 ### 11.4 Reading time estimation
 
@@ -368,11 +376,12 @@ Reader can name each colour globally via the `:` panel, e.g. `Yellow: definition
 
 ### 13.4 Navigation
 
-- `]` jumps to the **next** pin of the most recently active colour. The reading position teleports to the target chunk; the window rebuilds around the target; the section banner updates.
-- `[` jumps to the previous pin of the same colour.
-- `'` returns to the pre-jump position.
+Pin navigation under Parsem-bwz is **pure client-side scroll** — it does not advance `current_position`, does not consume tokens, does not send any POST. Pinned chunks stay visible in the growing-document model (§15), so jumping is just smooth-scrolling to a pin's chunk element.
 
-If the reader has not yet touched a pin in the session, `]` and `[` cycle through pins of any colour.
+- `]` / `[` — scroll to the next / previous pin (any colour), wrapping at the ends of the document
+- `}` / `{` — scroll to the next / previous pin of the **same colour as the current chunk's pin**; if the current chunk has no pin, the keys are a deliberate no-op (rather than falling back to last-active-colour state)
+
+The legacy `POST /documents/{id}/jump-to-pin` and `POST /documents/{id}/return` routes from §22 still exist for tests and tooling, but are not reached by the keyboard.
 
 ### 13.5 Pin density
 
@@ -407,17 +416,17 @@ Diverging palette: red (5) → amber (4) → neutral grey (3) → light blue-gre
 
 ## 15. Visual Frame
 
-The reading surface is a **windowed view** with `view.window_k = 5`. The current chunk is visible at full opacity; the last K-1 settled chunks above are at 70% opacity. Chunks scroll off as the reader advances.
+The reading surface is a **growing rendered document** (Parsem-kli). Every revealed chunk stays in the DOM with its source markdown rendered to HTML via `markdown-it-py`; the reader can scroll back through everything they have read in this document. The current chunk is marked with a 2px left-border accent in the gutter; settled chunks render at full opacity (their footprint is the visual reading-history). The chunker still controls when content reveals; the renderer just keeps it visible.
+
+> The earlier draft of this section described a windowed view with `view.window_k = 5` — settled chunks fading at 70% opacity and scrolling off as the reader advanced. That was Phase 1 prototype behaviour. Parsem-kli replaced it because (a) markdown rendering produces structured HTML that wants to be readable, not faded, and (b) being able to scroll back through what you've read is more honest to "deep reading" than artificial fade-out.
 
 ### 15.1 Section boundaries
 
-The window **clears** when the reader crosses a heading. The new section's heading becomes a sticky banner. Backward navigation across the boundary repopulates the prior section's window.
+The current section's heading **collapses into the top bar** as a secondary line under the document title once the reader has scrolled past the first H2. Above the first H2, only the document title shows. There is **no window-clear** at heading boundaries under the growing-document model — section transitions are visible in the rendered HTML structure (heading elements, spacing).
 
 ### 15.2 Backward review
 
-`Shift+Up` enters review mode: the windowed K expands so the reader can scroll further into the past without changing their `current_position`. `Esc` exits review mode and returns to the prior view. Pins can be created, ratings can be recorded, while in review mode.
-
-In Phase 1, the return-first rule (§8.1) applies inside review mode as well — pins and ratings while in review mode target the **active chunk** after the return-scroll, not the chunk the reader has scrolled to. Targeting the chunk under the cursor (i.e. true backward annotation) lands with the rate-prior-chunk bead.
+`Shift+Up` toggles **review mode** (a body class). Under the windowed-view spec this expanded K; under the growing-document model the entire revealed history is already visible, so review mode is a softer affordance — it dims the visual differentiation between current and settled (`.chunk--settled` opacity tweak) so the reader can scan history without the current-chunk accent guiding their eye. `Esc` exits review mode. Pins can be created and ratings can be recorded while in review mode; the return-first rule (§8.1) still applies to action keys.
 
 ### 15.3 Presentation
 
@@ -579,12 +588,13 @@ Some values are deliberately **not user-configurable**, even though they are sto
 
 ```yaml
 chunking:
-  budget_seconds: 10
+  budget_seconds: 30          # Parsem-ew8: 30s @ 220wpm ≈ 110 words ≈ paragraph
   read_wpm_prose: 220
   read_wpm_code: 110
   wpm_user_scaling: 1.0       # range 0.5–2.0
-  code_handling: block        # block | prose
-  list_handling: item         # item | block | prose
+  code_handling: block        # block | prose (prose unimplemented)
+  list_handling: block        # item | block | prose (Parsem-ew8 default)
+  absorb_colon_lead_in: true  # Parsem-5lx: 'Foo:\n\n- a\n- b' becomes one chunk
 
 bucket:
   capacity: 5                 # FIXED — not exposed in the settings UI (§12.1)
@@ -747,9 +757,13 @@ POST  /documents/{id}/reveal       → advance current_position
 POST  /documents/{id}/conceal      → retreat one chunk
 POST  /documents/{id}/rate         → {chunk_id, rating}
 POST  /documents/{id}/pin          → {chunk_id, action: cycle|clear}
+POST  /documents/{id}/close        → log close_document event (sendBeacon on pagehide; Parsem-8wj)
+GET   /documents/{id}/version      → tiny JSON {version} for 2s poll-sync (not yet implemented — Parsem-2rp)
+
+# LEGACY pin navigation — kept for backward compat, not exercised by the keyboard.
+# Pin nav is handled client-side as pure scroll under Parsem-bwz; see §13.4.
 POST  /documents/{id}/jump-to-pin  → {direction: next|prev, color_id?}
 POST  /documents/{id}/return       → return to pre-jump position
-GET   /documents/{id}/version      → tiny JSON {version} for 2s poll-sync
 
 # Document management
 POST  /documents/{id}/rename       → {title}; returns the updated library-row fragment
@@ -853,6 +867,52 @@ Build:
 
 ---
 
-## 27. One-Sentence Definition
+## 27. Deviations & Decisions Log
+
+Deliberate divergences between this spec and the shipped Phase 1+2 code. Each entry cites the bead that landed it. Order is bead-id, not chronological.
+
+### 27.1 Chunking budget raised from 10s to 30s (Parsem-ew8)
+
+The original 10s default produced sub-paragraph chunks that read as Powerpoint slides. 30s @ 220 wpm ≈ 110 words ≈ comfortably one or two paragraphs. Reflected in §11.1 and §20.
+
+### 27.2 List handling default flipped from `item` to `block` (Parsem-ew8)
+
+Per-item chunks broke list flow visually. Reading a 6-item list as 6 chunks felt wrong. The whole-list-as-one-chunk default reads as one unit. §20 default updated.
+
+### 27.3 Reader is a growing rendered document, not a windowed view (Parsem-kli)
+
+Replaced the K=5 windowed view (current chunk + 4 settled at 70% opacity, scrolling off as reader advances) with a growing rendered document. Every revealed chunk stays in the DOM; markdown source is rendered to HTML via `markdown-it-py`; the reader can scroll back through their full reading history. The current chunk is marked only by a 2px left-border accent in the gutter. §15 fully rewritten; §15.1 (window-clear at heading) and §15.2 (review-mode K-expansion) revised.
+
+### 27.4 Cross-paragraph sentence packing (Parsem-e9t)
+
+Spec §11.1's "fill greedily with whole sentences" was implemented as "within one paragraph block" through Phase 1, producing tiny chunks for documents with short consecutive paragraphs. Parsem-e9t makes packing cross paragraph boundaries within a run; sentences from different blocks join with `\n\n` so the renderer treats them as adjacent `<p>` elements. The spec language was always correct; the implementation now matches.
+
+### 27.5 Colon-terminated lead-in absorption (Parsem-5lx)
+
+A paragraph chunk whose trimmed text ends with `:` followed immediately by a list run is absorbed into the merged list chunk. "This list:\n\n- a\n- b" reads as one chunk instead of orphaning the lead-in. New rule, not in original §11; behind `chunking.absorb_colon_lead_in` (default true).
+
+### 27.6 Pin navigation moved to client-side scroll (Parsem-bwz)
+
+Spec §13.4 had `[`/`]` advance `current_position` to a pin's chunk via `POST /jump-to-pin`. Under the growing-document model (27.3) every revealed chunk is in the DOM, so pin navigation is now pure client-side smooth-scroll — `current_position` is unchanged. New keys `}` / `{` scroll between same-colour pins (no-op when current chunk has no pin). The server routes `POST /jump-to-pin` and `POST /return` remain for tests/tooling but are unreachable from the keyboard.
+
+### 27.7 Lifecycle event POST route (Parsem-8wj)
+
+Spec §18.1 listed `close_document` as an event type but no route to log it. Added `POST /documents/{id}/close` triggered by client `pagehide`/`beforeunload` `sendBeacon`. Returns 204 unconditionally so stale beacons for deleted docs don't surface as errors. `open_document` is logged synchronously inside `GET /documents/{id}/reader`.
+
+### 27.8 Multi-tab polling deferred (Parsem-2rp open)
+
+Spec §16's `GET /documents/{id}/version` + 2s JS poll is not yet implemented. Single-tab assumption holds for now: process-global `app.state.reader` is overwritten when a different doc opens. Multi-tab support is filed as Parsem-2rp.
+
+### 27.9 Settings/cheatsheet/admin routes deferred to Phase 3
+
+§22 routes for `GET/POST /settings`, `GET /cheatsheet`, `POST /pin-labels`, `POST /admin/rebuild-projections` are unimplemented. Phase 3 work per §25.
+
+### 27.10 `POST /pin` body is cycle-only
+
+Spec §22 parameterizes `POST /pin → {chunk_id, action: cycle|clear}`. Code only implements cycle (no body); clear requires 5 P-presses. A 30-line follow-up to land the `clear` action and rebind `Shift+P` is queued.
+
+---
+
+## 28. One-Sentence Definition
 
 **Parsem is a self-hosted Markdown-first deep-reading app that reveals documents one chunk at a time, paces the reader through a per-document reveal-token bucket, and lets the reader build their own semantic taxonomy of each document via colour-coded pins and a 1–5 effort heatmap.**
