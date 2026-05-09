@@ -56,13 +56,17 @@
   }
 
   function findTarget(pins, fromPosition, direction) {
+    // No wrap-at-ends: ] past the last pin and [ before the first pin
+    // are both no-ops. Earlier wrap behaviour (spec §13.4 pre-claude-
+    // axx.3 UAT) felt inverted to readers — pressing ] from the
+    // frontier with all pins behind would zip the viewport to the
+    // first pin (visually upward), reading as the wrong direction.
     if (pins.length === 0) return null;
     if (direction === "next") {
-      const ahead = pins.find((p) => p.position > fromPosition);
-      return ahead || pins[0]; // wrap to first
+      return pins.find((p) => p.position > fromPosition) || null;
     }
     const behind = pins.filter((p) => p.position < fromPosition);
-    return behind.length ? behind[behind.length - 1] : pins[pins.length - 1]; // wrap to last
+    return behind.length ? behind[behind.length - 1] : null;
   }
 
   function jumpToPin(direction, sameColorOnly) {

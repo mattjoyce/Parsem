@@ -511,7 +511,7 @@ Reader can name each colour globally via the `:` panel, e.g. `Yellow: definition
 
 Pin navigation under Parsem-bwz is **pure client-side scroll** — it does not advance `current_position`, does not consume tokens, does not send any POST. Pinned chunks stay visible in the growing-document model (§15), so jumping is just smooth-scrolling to a pin's chunk element.
 
-- `]` / `[` — scroll to the next / previous pin (any colour), wrapping at the ends of the document
+- `]` / `[` — scroll to the next / previous pin (any colour). No wrap-at-ends: `]` past the last pin and `[` before the first pin are both no-ops. Wrap-around behaviour was tried first and read as direction-inversion in UAT (claude-axx.3) — readers expect arrow-keys-style "stop at the wall."
 - `}` / `{` — scroll to the next / previous pin of the **same colour as the current chunk's pin**; if the current chunk has no pin, the keys are a deliberate no-op (rather than falling back to last-active-colour state)
 
 The legacy `POST /documents/{id}/jump-to-pin` and `POST /documents/{id}/return` routes from §22 still exist for tests and tooling, but are not reached by the keyboard.

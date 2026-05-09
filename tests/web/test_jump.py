@@ -86,34 +86,50 @@ def test_jump_to_pin_same_as_current_is_noop_when_current_unpinned(
     assert "X-Reveal-Outcome" not in response.headers
 
 
-def test_jump_to_pin_same_as_current_wraps_around_within_color(
+def test_jump_to_pin_same_as_current_at_last_in_color_is_noop(
     client: TestClient, state: ReaderState
 ) -> None:
-    """Wrap-around inside a same-colour set: from past the last colour-1
-    pin, `}` returns to the first colour-1 pin."""
+    """No wrap-at-ends: `}` from the last colour-1 pin is a no-op
+    rather than wrapping to the first. UAT (claude-axx.3) found
+    wrap behaviour read as direction-inversion."""
     state.pin_colors = {2: 1, 5: 2, 8: 1}
-    state.current_position = 8  # current chunk pinned colour 1, also last colour-1 pin
-    client.post(
+    state.current_position = 8  # last colour-1 pin
+    pos_before = state.current_position
+    response = client.post(
         "/jump-to-pin",
         json={"direction": "next", "color_mode": "same_as_current"},
     )
-    assert state.current_position == 2  # wraps to first colour-1 pin
+    assert state.current_position == pos_before
+    assert state.pre_jump_position is None
+    assert "X-Reveal-Outcome" not in response.headers
 
 
-def test_jump_to_pin_next_wraps_around(client: TestClient, state: ReaderState) -> None:
+def test_jump_to_pin_next_past_last_pin_is_noop(
+    client: TestClient, state: ReaderState
+) -> None:
+    """No wrap-at-ends (claude-axx.3 UAT): when current is past every
+    pin, `]` does nothing rather than zipping back to the first pin."""
     state.pin_colors = {2: 1, 5: 1}
-    state.last_active_pin_color = 1
     state.current_position = 6
-    client.post("/jump-to-pin", json={"direction": "next"})
-    assert state.current_position == 2  # wraps from past-last to first
+    pos_before = state.current_position
+    response = client.post("/jump-to-pin", json={"direction": "next"})
+    assert state.current_position == pos_before
+    assert state.pre_jump_position is None
+    assert "X-Reveal-Outcome" not in response.headers
 
 
-def test_jump_to_pin_prev_wraps_around(client: TestClient, state: ReaderState) -> None:
+def test_jump_to_pin_prev_before_first_pin_is_noop(
+    client: TestClient, state: ReaderState
+) -> None:
+    """No wrap-at-ends: when current is before every pin, `[` does
+    nothing rather than wrapping to the last pin."""
     state.pin_colors = {2: 1, 5: 1}
-    state.last_active_pin_color = 1
     state.current_position = 1
-    client.post("/jump-to-pin", json={"direction": "prev"})
-    assert state.current_position == 5  # wraps from before-first to last
+    pos_before = state.current_position
+    response = client.post("/jump-to-pin", json={"direction": "prev"})
+    assert state.current_position == pos_before
+    assert state.pre_jump_position is None
+    assert "X-Reveal-Outcome" not in response.headers
 
 
 def test_jump_to_pin_only_pin_at_current_is_noop(

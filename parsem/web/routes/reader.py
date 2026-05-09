@@ -133,8 +133,9 @@ def _find_jump_target(
     state: ReaderState, direction: str, color_mode: str
 ) -> int | None:
     """Return the chunk position of the next/prev pin under `color_mode`,
-    with wrap-around. None when the jump would not move — no pins match,
-    or the only matching pin is at `current_position`.
+    or None when no jump is available. No wrap-at-ends — `]` past the
+    last pin and `[` before the first pin are both no-ops. Earlier
+    wrap behaviour read as inverted in UAT (claude-axx.3).
 
     Spec §8 keyboard table:
       "any"               — `]` / `[`  no colour filter, any pin matches
@@ -154,11 +155,9 @@ def _find_jump_target(
     current = state.current_position
     if direction == "next":
         ahead = [p for p in positions if p > current]
-        target = ahead[0] if ahead else positions[0]
-    else:
-        behind = [p for p in positions if p < current]
-        target = behind[-1] if behind else positions[-1]
-    return None if target == current else target
+        return ahead[0] if ahead else None
+    behind = [p for p in positions if p < current]
+    return behind[-1] if behind else None
 
 
 @router.post("/jump-to-pin", response_class=HTMLResponse)
