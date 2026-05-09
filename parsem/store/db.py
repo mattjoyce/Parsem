@@ -120,8 +120,100 @@ CREATE TABLE settings (
 );
 """
 
+# v2 — atomic chunking substrate (claude-axx). Adds immutable revisions,
+# named chunking runs (provenance), atomic pieces, chunk↔piece junction.
+# Existing chunks/sections gain back-references to revision + run.
+# User authorized full data wipe — v1 rows are removed during this migration.
+SCHEMA_V2 = """
+CREATE TABLE document_revisions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    document_id INTEGER NOT NULL,
+    full_text TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    line_index_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_revisions_doc ON document_revisions(document_id, created_at DESC);
+
+CREATE TABLE chunking_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    revision_id INTEGER NOT NULL,
+    strategy_name TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    rules_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY(revision_id) REFERENCES document_revisions(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_runs_revision ON chunking_runs(revision_id, created_at DESC);
+
+CREATE TABLE atomic_pieces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    revision_id INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    source_block_index INTEGER NOT NULL,
+    ordinal_in_block INTEGER NOT NULL,
+    source_offset_start INTEGER NOT NULL,
+    source_offset_end INTEGER NOT NULL,
+    start_line INTEGER NOT NULL,
+    end_line INTEGER NOT NULL,
+    start_column INTEGER NOT NULL,
+    end_column INTEGER NOT NULL,
+    text_hash TEXT NOT NULL,
+    text_snapshot TEXT NOT NULL,
+    heading_level INTEGER,
+    structural_parent_piece_id INTEGER,
+    FOREIGN KEY(revision_id) REFERENCES document_revisions(id) ON DELETE CASCADE,
+    FOREIGN KEY(structural_parent_piece_id) REFERENCES atomic_pieces(id) ON DELETE SET NULL,
+    UNIQUE(revision_id, ordinal)
+);
+CREATE INDEX idx_pieces_revision_ord ON atomic_pieces(revision_id, ordinal);
+
+CREATE TABLE chunk_pieces (
+    chunk_id INTEGER NOT NULL,
+    piece_id INTEGER NOT NULL,
+    ordinal INTEGER NOT NULL,
+    PRIMARY KEY(chunk_id, ordinal),
+    FOREIGN KEY(chunk_id) REFERENCES chunks(id) ON DELETE CASCADE,
+    FOREIGN KEY(piece_id) REFERENCES atomic_pieces(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_chunk_pieces_piece ON chunk_pieces(piece_id);
+
+-- ALTER chunks: add back-refs and source-anchoring extras. Nullable on
+-- the column itself because SQLite ALTER ADD COLUMN can't enforce NOT
+-- NULL retroactively; the v2 wipe below clears v1 rows so app-side
+-- inserts will populate every new row.
+ALTER TABLE chunks ADD COLUMN chunking_run_id INTEGER
+    REFERENCES chunking_runs(id) ON DELETE CASCADE;
+ALTER TABLE chunks ADD COLUMN revision_id INTEGER
+    REFERENCES document_revisions(id) ON DELETE CASCADE;
+ALTER TABLE chunks ADD COLUMN text_hash TEXT;
+ALTER TABLE chunks ADD COLUMN start_line INTEGER;
+ALTER TABLE chunks ADD COLUMN end_line INTEGER;
+ALTER TABLE chunks ADD COLUMN start_column INTEGER;
+ALTER TABLE chunks ADD COLUMN end_column INTEGER;
+CREATE INDEX idx_chunks_run_pos ON chunks(chunking_run_id, position);
+
+-- Wipe v1 rows. Cascade order matters but is enforced by FKs; explicit
+-- order here for clarity. Pins/ratings/state/events are dependents of
+-- documents, but we drain leaf tables first so no FK chooses a stale row.
+-- Also reset AUTOINCREMENT counters so re-seeded docs start at id=1
+-- (otherwise sqlite_sequence remembers the pre-wipe high water mark and
+-- the next welcome doc would land at e.g. id=9 instead of 1).
+DELETE FROM pins;
+DELETE FROM chunk_ratings;
+DELETE FROM reading_events;
+DELETE FROM reading_state;
+DELETE FROM chunks;
+DELETE FROM sections;
+DELETE FROM documents;
+DELETE FROM sqlite_sequence
+ WHERE name IN ('documents', 'sections', 'chunks', 'reading_events', 'pins');
+"""
+
 # Forward-only migration list. Index = (version - 1). Append, never edit.
-MIGRATIONS: list[str] = [SCHEMA_V1]
+MIGRATIONS: list[str] = [SCHEMA_V1, SCHEMA_V2]
 
 
 def connect(path: str | Path = ":memory:") -> sqlite3.Connection:

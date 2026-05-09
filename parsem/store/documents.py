@@ -17,7 +17,11 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 
+from parsem.domain.atomic import AtomicPiece
 from parsem.domain.chunking import Chunk, Section
+from parsem.domain.materialize import ChunkRecord, SectionRecord
+from parsem.store.atomic_pieces import insert_atomic_pieces
+from parsem.store.chunking_runs import ChunkingRun, insert_chunking_run
 
 
 @dataclass(frozen=True)
@@ -321,14 +325,19 @@ def rename_document(
 def delete_document_chunks_and_sections(
     conn: sqlite3.Connection, document_id: int
 ) -> None:
-    """Wipe a document's chunks and sections. Used by retry-parse to
-    clear prior partial state before re-running the parse pipeline.
+    """Wipe a document's substrate (revisions → pieces, runs, chunks) and
+    sections. Used by retry-parse to clear prior partial state before
+    re-running the parse pipeline.
 
-    Schema cascades clean up the dependents — `chunk_ratings` and
-    `pins` are FK'd to chunks (§21) so deleting chunks removes them
-    automatically. `reading_state` is FK'd to documents (not chunks),
-    so it is not cleared here — a failed-then-retried document has
-    no reading_state row anyway."""
+    Deleting `document_revisions` cascades to `atomic_pieces`,
+    `chunking_runs`, `chunks`, `chunk_pieces`, `chunk_ratings`, and
+    `pins`. Sections aren't cascaded by revisions (they FK directly to
+    documents) so they're wiped explicitly. Stray chunks with NULL
+    chunking_run_id (legacy / test fixtures) are also cleared so a
+    retry doesn't leave a half-substrate behind."""
+    conn.execute(
+        "DELETE FROM document_revisions WHERE document_id=?", (document_id,)
+    )
     conn.execute("DELETE FROM chunks WHERE document_id=?", (document_id,))
     conn.execute("DELETE FROM sections WHERE document_id=?", (document_id,))
     conn.commit()
@@ -348,12 +357,36 @@ def delete_document(conn: sqlite3.Connection, document_id: int) -> bool:
 
 
 def load_chunks_for_document(conn: sqlite3.Connection, document_id: int) -> list[Chunk]:
-    rows = conn.execute(
-        "SELECT position, source_offset_start, source_offset_end, text,"
-        " lead_token_type, lead_heading_level, estimated_read_seconds"
-        " FROM chunks WHERE document_id=? ORDER BY position",
+    """Latest-run chunks for a document, returned as legacy `Chunk` shape.
+
+    Filters by the most recent chunking_run when one exists; falls back
+    to chunks with NULL chunking_run_id for legacy/test fixtures that
+    bypass the substrate. Splitting the query on the run-existence check
+    keeps the SQL simple and the index hits clean.
+    """
+    run_row = conn.execute(
+        "SELECT cr.id FROM chunking_runs cr"
+        " JOIN document_revisions dr ON dr.id = cr.revision_id"
+        " WHERE dr.document_id = ?"
+        " ORDER BY cr.id DESC LIMIT 1",
         (document_id,),
-    ).fetchall()
+    ).fetchone()
+    if run_row is not None:
+        rows = conn.execute(
+            "SELECT position, source_offset_start, source_offset_end, text,"
+            " lead_token_type, lead_heading_level, estimated_read_seconds"
+            " FROM chunks WHERE document_id=? AND chunking_run_id=?"
+            " ORDER BY position",
+            (document_id, run_row["id"]),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT position, source_offset_start, source_offset_end, text,"
+            " lead_token_type, lead_heading_level, estimated_read_seconds"
+            " FROM chunks WHERE document_id=? AND chunking_run_id IS NULL"
+            " ORDER BY position",
+            (document_id,),
+        ).fetchall()
     return [
         Chunk(
             position=row["position"],
@@ -368,14 +401,249 @@ def load_chunks_for_document(conn: sqlite3.Connection, document_id: int) -> list
     ]
 
 
-def load_sections_for_document(conn: sqlite3.Connection, document_id: int) -> list[Section]:
+def insert_chunking_artifacts(
+    conn: sqlite3.Connection,
+    *,
+    document_id: int,
+    revision_id: int,
+    strategy_name: str,
+    strategy_version: str,
+    rules_hash: str,
+    pieces: list[AtomicPiece],
+    chunk_records: list[ChunkRecord],
+    section_records: list[SectionRecord],
+    now: datetime,
+) -> ChunkingRun:
+    """Persist the full substrate output for a single chunking pass.
+
+    Order matches the FK graph: revisions exist already (caller handed
+    in `revision_id`); pieces and the run go in next; chunks reference
+    the run; chunk_pieces junction maps planned ordinals to piece ids;
+    sections reference chunks via heading_chunk_id (resolved from the
+    position→id map); chunks.section_id is back-filled in a final
+    UPDATE pass once section ids are known.
+
+    Wraps all writes in a single transaction so a failed insert leaves
+    no half-substrate behind.
+    """
+    timestamp = now.isoformat()
+    try:
+        ordinal_to_piece_id = insert_atomic_pieces(
+            conn, revision_id=revision_id, pieces=pieces
+        )
+        run = insert_chunking_run(
+            conn,
+            revision_id=revision_id,
+            strategy_name=strategy_name,
+            strategy_version=strategy_version,
+            rules_hash=rules_hash,
+            now=now,
+        )
+
+        position_to_chunk_id: dict[int, int] = {}
+        for record in chunk_records:
+            cur = conn.execute(
+                "INSERT INTO chunks"
+                " (document_id, position, source_offset_start, source_offset_end,"
+                "  text, lead_token_type, lead_heading_level,"
+                "  estimated_read_seconds, created_at,"
+                "  chunking_run_id, revision_id, text_hash,"
+                "  start_line, end_line, start_column, end_column)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    document_id,
+                    record.position,
+                    record.source_offset_start,
+                    record.source_offset_end,
+                    record.text,
+                    record.lead_token_type,
+                    record.lead_heading_level,
+                    record.estimated_read_seconds,
+                    timestamp,
+                    run.id,
+                    revision_id,
+                    record.text_hash,
+                    record.start_line,
+                    record.end_line,
+                    record.start_column,
+                    record.end_column,
+                ),
+            )
+            chunk_id = cur.lastrowid
+            assert chunk_id is not None
+            position_to_chunk_id[record.position] = chunk_id
+
+            for ordinal_in_chunk, piece_ordinal in enumerate(record.piece_ordinals):
+                conn.execute(
+                    "INSERT INTO chunk_pieces (chunk_id, piece_id, ordinal)"
+                    " VALUES (?, ?, ?)",
+                    (chunk_id, ordinal_to_piece_id[piece_ordinal], ordinal_in_chunk),
+                )
+
+        section_id_by_start: dict[int, int] = {}
+        for section in section_records:
+            heading_chunk_id = (
+                position_to_chunk_id.get(section.heading_chunk_position)
+                if section.heading_chunk_position is not None
+                else None
+            )
+            cur = conn.execute(
+                "INSERT INTO sections"
+                " (document_id, heading_chunk_id, heading_level,"
+                "  start_chunk_position, end_chunk_position)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (
+                    document_id,
+                    heading_chunk_id,
+                    section.heading_level,
+                    section.start_chunk_position,
+                    section.end_chunk_position,
+                ),
+            )
+            section_id = cur.lastrowid
+            assert section_id is not None
+            section_id_by_start[section.start_chunk_position] = section_id
+
+        for section in section_records:
+            section_id = section_id_by_start[section.start_chunk_position]
+            conn.execute(
+                "UPDATE chunks SET section_id=?"
+                " WHERE document_id=? AND chunking_run_id=?"
+                " AND position BETWEEN ? AND ?",
+                (
+                    section_id,
+                    document_id,
+                    run.id,
+                    section.start_chunk_position,
+                    section.end_chunk_position,
+                ),
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    return run
+
+
+def load_chunk_records_for_document(
+    conn: sqlite3.Connection, document_id: int
+) -> list[ChunkRecord]:
+    """Latest-run chunk records for a document. Returns [] when the
+    document has no chunking run yet (still processing or failed)."""
+    rows = conn.execute(
+        "SELECT c.id, c.position, c.source_offset_start, c.source_offset_end,"
+        " c.text, c.text_hash, c.lead_token_type, c.lead_heading_level,"
+        " c.estimated_read_seconds, c.start_line, c.end_line, c.start_column,"
+        " c.end_column"
+        " FROM chunks c"
+        " JOIN ("
+        "  SELECT id FROM chunking_runs cr"
+        "  JOIN document_revisions dr ON dr.id = cr.revision_id"
+        "  WHERE dr.document_id = ?"
+        "  ORDER BY cr.id DESC LIMIT 1"
+        " ) latest ON latest.id = c.chunking_run_id"
+        " ORDER BY c.position",
+        (document_id,),
+    ).fetchall()
+    if not rows:
+        return []
+    chunk_ids = [row["id"] for row in rows]
+    placeholders = ",".join("?" * len(chunk_ids))
+    junction_rows = conn.execute(
+        f"SELECT cp.chunk_id, cp.ordinal, ap.ordinal AS piece_ordinal"
+        f" FROM chunk_pieces cp"
+        f" JOIN atomic_pieces ap ON ap.id = cp.piece_id"
+        f" WHERE cp.chunk_id IN ({placeholders})"
+        f" ORDER BY cp.chunk_id, cp.ordinal",
+        chunk_ids,
+    ).fetchall()
+    pieces_by_chunk: dict[int, list[int]] = {cid: [] for cid in chunk_ids}
+    for jr in junction_rows:
+        pieces_by_chunk[jr["chunk_id"]].append(jr["piece_ordinal"])
+    return [
+        ChunkRecord(
+            position=row["position"],
+            source_offset_start=row["source_offset_start"],
+            source_offset_end=row["source_offset_end"],
+            text=row["text"],
+            text_hash=row["text_hash"],
+            lead_token_type=row["lead_token_type"],
+            lead_heading_level=row["lead_heading_level"],
+            estimated_read_seconds=row["estimated_read_seconds"],
+            start_line=row["start_line"],
+            end_line=row["end_line"],
+            start_column=row["start_column"],
+            end_column=row["end_column"],
+            piece_ordinals=pieces_by_chunk[row["id"]],
+        )
+        for row in rows
+    ]
+
+
+def load_section_records_for_document(
+    conn: sqlite3.Connection, document_id: int
+) -> list[SectionRecord]:
+    """Latest-run sections for a document."""
     rows = conn.execute(
         "SELECT s.start_chunk_position, s.end_chunk_position, s.heading_level,"
         " c.position AS heading_chunk_position"
         " FROM sections s LEFT JOIN chunks c ON c.id = s.heading_chunk_id"
-        " WHERE s.document_id=? ORDER BY s.start_chunk_position",
-        (document_id,),
+        " WHERE s.document_id=?"
+        " AND ("
+        "  s.heading_chunk_id IS NULL"
+        "  OR c.chunking_run_id = ("
+        "    SELECT id FROM chunking_runs cr"
+        "    JOIN document_revisions dr ON dr.id = cr.revision_id"
+        "    WHERE dr.document_id = ?"
+        "    ORDER BY cr.id DESC LIMIT 1"
+        "  )"
+        " )"
+        " ORDER BY s.start_chunk_position",
+        (document_id, document_id),
     ).fetchall()
+    return [
+        SectionRecord(
+            heading_chunk_position=row["heading_chunk_position"],
+            heading_level=row["heading_level"],
+            start_chunk_position=row["start_chunk_position"],
+            end_chunk_position=row["end_chunk_position"],
+        )
+        for row in rows
+    ]
+
+
+def load_sections_for_document(conn: sqlite3.Connection, document_id: int) -> list[Section]:
+    """Latest-run sections for a document, in legacy `Section` shape.
+
+    The heading_chunk_id → chunking_run_id check filters out sections
+    that belong to retired runs; prologue sections (heading_chunk_id
+    IS NULL) survive the filter so they're shown for either run."""
+    run_row = conn.execute(
+        "SELECT cr.id FROM chunking_runs cr"
+        " JOIN document_revisions dr ON dr.id = cr.revision_id"
+        " WHERE dr.document_id = ?"
+        " ORDER BY cr.id DESC LIMIT 1",
+        (document_id,),
+    ).fetchone()
+    if run_row is not None:
+        rows = conn.execute(
+            "SELECT s.start_chunk_position, s.end_chunk_position, s.heading_level,"
+            " c.position AS heading_chunk_position"
+            " FROM sections s LEFT JOIN chunks c ON c.id = s.heading_chunk_id"
+            " WHERE s.document_id=?"
+            " AND (s.heading_chunk_id IS NULL OR c.chunking_run_id=?)"
+            " ORDER BY s.start_chunk_position",
+            (document_id, run_row["id"]),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT s.start_chunk_position, s.end_chunk_position, s.heading_level,"
+            " c.position AS heading_chunk_position"
+            " FROM sections s LEFT JOIN chunks c ON c.id = s.heading_chunk_id"
+            " WHERE s.document_id=? ORDER BY s.start_chunk_position",
+            (document_id,),
+        ).fetchall()
     return [
         Section(
             heading_chunk_position=row["heading_chunk_position"],

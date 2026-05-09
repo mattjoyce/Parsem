@@ -1,12 +1,14 @@
 """Parse-and-persist pipeline shared by upload and retry-parse.
 
-Spec: parsem-spec.md §17.1, §17.2. Beads: Parsem-cwj, Parsem-pnk.
+Spec: parsem-spec.md §17.1, §17.2; AtomicChunkingPhase1.md §Implementation
+Sequence. Tries to ingest a markdown payload through the atomic substrate;
+on parse / build / plan / materialize exception or empty input, marks the
+document `failed` with a human-readable reason and returns False.
 
-Tries to parse + chunk + persist; on parse exception or empty input,
-marks the document `failed` with a human-readable reason and returns
-False. The caller (upload route or retry route) handles any
-pre-state cleanup (retry-parse wipes prior chunks/sections; upload
-starts from a freshly inserted row).
+The full pipeline (claude-axx):
+  text -> DocumentRevision -> ParsedBlock[] -> AtomicPiece[]
+       -> PreprocessedPiece[] -> ChunkPlan -> ChunkRecord[] -> SectionRecord[]
+       -> persist (revision, pieces, run, chunks+chunk_pieces, sections)
 """
 
 from __future__ import annotations
@@ -14,13 +16,18 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
-from parsem.domain.chunking import ChunkingConfig, chunk
+from parsem.domain.atomic import build_atomic_pieces, validate_pieces
+from parsem.domain.materialize import derive_sections, materialize_chunks
+from parsem.domain.preprocessed import preprocess_pieces
+from parsem.domain.strategies import ChunkingRuleset, validate_chunk_plan
+from parsem.domain.strategies.current_reading_time import CurrentReadingTimeStrategy
 from parsem.parse.markdown_parse import parse
 from parsem.store.documents import (
-    insert_chunks_and_sections,
+    insert_chunking_artifacts,
     mark_document_failed,
     mark_document_ready,
 )
+from parsem.store.revisions import insert_revision
 
 
 def parse_and_persist(
@@ -30,28 +37,49 @@ def parse_and_persist(
     text: str,
     now: datetime,
 ) -> bool:
-    """Parse → chunk → persist → mark ready. Returns True on success,
-    False after recording a failure reason."""
+    """Run the full atomic-chunking pipeline and persist the artifacts.
+    Returns True on success, False after recording a failure reason."""
     try:
-        output = chunk(parse(text), ChunkingConfig())
+        revision = insert_revision(
+            conn, document_id=document_id, full_text=text, now=now
+        )
+        rules = ChunkingRuleset()
+        blocks = parse(text)
+        pieces = build_atomic_pieces(
+            blocks, rules.atomic_rules, text, revision.line_index
+        )
+        validate_pieces(pieces, text)
+        preprocessed = preprocess_pieces(pieces, rules.reading_rules)
+        strategy = CurrentReadingTimeStrategy()
+        plan = strategy.plan(preprocessed, rules)
+        validate_chunk_plan(plan, preprocessed)
+        chunk_records = materialize_chunks(plan, revision, pieces, rules)
+        section_records = derive_sections(chunk_records)
     except Exception as exc:
         mark_document_failed(
             conn, document_id, reason=f"Parse failed: {exc}", now=now
         )
         return False
-    if not output.chunks:
+
+    if not chunk_records:
         mark_document_failed(
             conn, document_id, reason="Document is empty.", now=now
         )
         return False
-    insert_chunks_and_sections(
+
+    insert_chunking_artifacts(
         conn,
         document_id=document_id,
-        chunks=output.chunks,
-        sections=output.sections,
+        revision_id=revision.id,
+        strategy_name=strategy.name,
+        strategy_version=strategy.version,
+        rules_hash=rules.rules_hash(),
+        pieces=pieces,
+        chunk_records=chunk_records,
+        section_records=section_records,
         now=now,
     )
     mark_document_ready(
-        conn, document_id, total_chunks=len(output.chunks), now=now
+        conn, document_id, total_chunks=len(chunk_records), now=now
     )
     return True

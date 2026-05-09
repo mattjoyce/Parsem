@@ -240,27 +240,58 @@ The window **clears** at every heading — when the reader crosses into a new se
 
 ## 10. Document Model
 
-The MVP document model is a list of **chunks**, derived from a Markdown token stream by a deterministic chunker. Sections group chunks by heading boundary.
+The document model is a deterministic substrate (claude-axx, *AtomicChunkingPhase1.md*):
 
-A chunk is the atomic unit of reveal. A chunk has:
+```text
+Uploaded Markdown
+  → DocumentRevision        (immutable, hashed, line-indexed)
+  → ParsedBlock[]           (markdown-it tokens with offsets)
+  → AtomicPiece[]           (smallest legal source-faithful unit)
+  → PreprocessedPiece[]     (deterministic metrics + flags)
+  → ChunkPlan               (planning over piece IDs)
+  → ChunkRecord[]           (the reveal units the reader sees)
+  → SectionRecord[]         (heading-bounded grouping)
+```
 
-- A position (0-indexed, contiguous within a document)
-- A reference to the source-Markdown byte range (`source_offset_start`, `source_offset_end`)
-- The denormalised chunk text (cached for fast read; re-derivable from source + offsets)
-- A `lead_token_type` (`heading`, `paragraph`, `list_item`, `code`, `blockquote`, `table`)
-- An optional `lead_heading_level` (1–6) when the chunk's lead token is a heading
-- An `estimated_read_seconds` value
+`DocumentRevision` is the canonical text (one immutable row per ingest pass; `content_hash` is sha-256 over UTF-8 bytes; `line_index_json` caches line-start offsets for fast `(line, column)` lookup). Every derived record traces back to a revision; nothing is materialised from uploaded temp files after the revision is created.
+
+`AtomicPiece` is the smallest legal unit a deterministic strategy may place in a chunk. Phase 1 piece kinds: `heading`, `sentence`, `paragraph`, `code_block`, `list_item`, `list_run`, `blockquote`, `table`. Each piece carries source offsets, line/column spans, a `text_hash` over its slice, and a `text_snapshot` (debug/test convenience; canonical text remains the revision slice).
+
+A `ChunkingRun` is provenance: `(strategy_name, strategy_version, rules_hash)` over a revision. Changing any rule produces a new run, never a mutation of an old run's meaning. Phase 1 ships one strategy (`current_reading_time` v1.0.0); the substrate is intentionally over-built to admit additional strategies (structural, speed, concept_learning, …) without further schema change.
+
+A `ChunkRecord` is the reveal unit the reader sees. Phase 1 chunks are **contiguous** source spans: `text == revision.full_text[source_offset_start:source_offset_end]`, validated by `text_hash`. A chunk references the pieces it contains via the `chunk_pieces` junction. A chunk has:
+
+- A position (0-indexed, contiguous within a chunking run)
+- Source-Markdown byte range (`source_offset_start`, `source_offset_end`) and line/column spans
+- Denormalised chunk text (cached for fast read; re-derivable from revision + offsets) plus its `text_hash`
+- A `lead_token_type` (`heading` | `paragraph` | `list_item` | `code` | `blockquote` | `table`) — derived from the first piece's kind via a fixed map (sentence → paragraph; list_run → list_item; code_block → code) so reader templates dispatch unchanged
+- An optional `lead_heading_level` (1–6) when the chunk's lead piece is a heading
+- An `estimated_read_seconds` value (sum over piece read-times under the run's `ReadingRules`)
 - A `section_id` linking it to the section it belongs to
 
-Section is a lightweight group with a heading chunk (or `NULL` for prologue), heading level, and the inclusive `(start, end)` chunk-position range.
+`SectionRecord` is the heading-bounded grouping: a heading chunk starts a new section; chunks before the first heading form a prologue (heading_chunk_id NULL). Section ranges are inclusive over chunk positions.
 
-The model has no full-document AST. The Markdown parser produces a token stream with source offsets; the chunker is the only stage that turns that stream into chunks.
+Pin and rating durability across re-chunks is piece-set based (claude-z99, deferred): a chunk's pieces are the stable anchor for re-anchoring, falling back to source-offset overlap when atomic rules change. Phase 1 is fresh-data only, so the primitive is documented but not exercised.
 
 ---
 
 ## 11. Chunking Rule
 
-The chunker is a pure function: `chunker(token_stream, config) → chunks + sections`.
+Phase 1 chunking runs through a strategy-driven substrate (claude-axx, *AtomicChunkingPhase1.md*):
+
+```text
+ChunkingStrategy.plan(preprocessed: PreprocessedPiece[], rules: ChunkingRuleset) → ChunkPlan
+materialize(plan, revision, pieces, rules) → ChunkRecord[]
+```
+
+The default strategy is `current_reading_time` (v1.0.0), which reproduces the historical chunker behaviour on the new substrate. A `ChunkingRuleset` packages four rule groups:
+
+- `AtomicRules` — atomicity decisions used *before* planning: `paragraph_atomicity` (sentence | paragraph), `list_atomicity` (item | run), code/table/blockquote atomic at block grain.
+- `ReadingRules` — `prose_wpm`, `code_wpm`, `budget_seconds`, `heading_cost` (normal | zero), `wpm_user_scaling`.
+- `StructuralRules` — `heading_attachment`, `code_handling`, `list_handling`, `list_lead_in` (none | colon_previous_paragraph), `table_handling`, `blockquote_handling`.
+- `MaterializationRules` — `require_contiguous_chunks` (Phase 1 always true), `preserve_source_text_when_contiguous`.
+
+The strategy is **never** allowed to invent text or source offsets. It emits `PlannedChunk[]` over piece ordinals; final text comes from `revision.full_text[start:end]` and is hash-validated.
 
 ### 11.1 The budget rule
 
@@ -293,7 +324,14 @@ A heading chunk **absorbs forward** sentences from the body following it, up to 
 
 ### 11.6 Re-chunking
 
-If `chunking` config changes, the chunker is re-run. Existing reading events continue to reference the old chunk ids. The projection rebuild step re-anchors event chunk-references to new chunks via `source_offset` overlap.
+A change to any rule (atomic, reading, structural, materialisation) — or to the strategy name/version — produces a **new ChunkingRun**, never a mutation of the old run's meaning. Old chunks remain in the database (provenance + audit) until garbage-collected. The reader always reads the latest run for a document; old runs are inert.
+
+Pin and rating re-anchoring across runs is piece-set based:
+
+- **Within unchanged atomic rules** — pieces are byte-identical across runs; chunks are different groupings of the same piece IDs. A pin/rating's owning chunk is identified by piece-set Jaccard against the new run's chunks.
+- **When atomic rules change** — pieces themselves change. Fall back to source-offset overlap: a piece's `(start_offset, end_offset)` finds the new piece(s) covering that range.
+
+Phase 1 is fresh-data only (no existing pins/ratings to re-anchor on first ship); claude-z99 and claude-jtu cover re-anchoring beyond Phase 1. Existing reading events still reference old chunk ids; projection rebuild can re-anchor by source overlap as before.
 
 ---
 
@@ -477,12 +515,20 @@ Upload a `.md` file. The pipeline runs synchronously:
 
 ```text
 Upload .md
-  → store original at data/originals/{doc_id}.md
-  → parse Markdown into a token stream (with source offsets)
-  → run the chunker (10s budget, sentence boundaries, structural rules)
-  → emit chunks + sections
+  → store original at data/originals/{doc_id}.md            (debug archive)
+  → INSERT documents row (status=processing)
+  → INSERT document_revisions (immutable, hashed, line-indexed)
+  → parse Markdown into ParsedBlock[] (markdown-it tokens + source offsets)
+  → build_atomic_pieces(blocks, AtomicRules)  →  AtomicPiece[]
+  → preprocess_pieces(pieces, ReadingRules)   →  PreprocessedPiece[]
+  → ChunkingStrategy.plan(preprocessed, rules)→  ChunkPlan
+  → materialize(plan, revision, pieces, rules)→  ChunkRecord[]
+  → derive_sections(chunks)                    →  SectionRecord[]
+  → INSERT chunking_runs + atomic_pieces + chunks + chunk_pieces + sections
   → mark document `ready` (or `failed` with reason)
 ```
+
+All inserts happen inside one transaction — a half-substrate is never persisted. Validation gates run between phases (`validate_pieces`, `validate_chunk_plan`); failures mark the document `failed`.
 
 ### 17.2 Failure handling
 
@@ -735,6 +781,92 @@ CREATE TABLE settings (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   config_json TEXT NOT NULL
 );
+
+-- ──────────────────────────────────────────────────────────────────────
+-- v2: atomic chunking substrate (claude-axx, AtomicChunkingPhase1.md)
+-- ──────────────────────────────────────────────────────────────────────
+
+-- Immutable Markdown revision per ingest pass. Canonical text + sha-256 +
+-- cached line index. Every derived record (pieces, plans, chunks, sections)
+-- traces back here. Never mutate full_text after creation.
+CREATE TABLE document_revisions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  document_id INTEGER NOT NULL,
+  full_text TEXT NOT NULL,
+  content_hash TEXT NOT NULL,                    -- sha-256 over UTF-8 bytes
+  line_index_json TEXT NOT NULL,                 -- JSON list of line-start offsets
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_revisions_doc ON document_revisions(document_id, created_at DESC);
+
+-- Provenance: which deterministic rules produced which chunks. Strategy +
+-- version + rules_hash form the identity. Any rule change → new run, never
+-- a mutation of an old run's meaning.
+CREATE TABLE chunking_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  revision_id INTEGER NOT NULL,
+  strategy_name TEXT NOT NULL,                   -- e.g. 'current_reading_time'
+  strategy_version TEXT NOT NULL,                -- e.g. '1.0.0'
+  rules_hash TEXT NOT NULL,                      -- sha-256 over canonical ruleset JSON
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(revision_id) REFERENCES document_revisions(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_runs_revision ON chunking_runs(revision_id, created_at DESC);
+
+-- Smallest legal source-faithful unit a strategy may place into a chunk.
+-- Pieces are determined by (revision_id, AtomicRules); same inputs always
+-- produce identical pieces. Stable across planning-rule changes; only
+-- changes to AtomicRules itself produces new pieces.
+CREATE TABLE atomic_pieces (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  revision_id INTEGER NOT NULL,
+  ordinal INTEGER NOT NULL,                      -- document-order, dense, 0-based
+  kind TEXT NOT NULL,                            -- heading|sentence|paragraph|code_block|list_item|list_run|blockquote|table
+  source_block_index INTEGER NOT NULL,
+  ordinal_in_block INTEGER NOT NULL,
+  source_offset_start INTEGER NOT NULL,
+  source_offset_end INTEGER NOT NULL,
+  start_line INTEGER NOT NULL,
+  end_line INTEGER NOT NULL,
+  start_column INTEGER NOT NULL,
+  end_column INTEGER NOT NULL,
+  text_hash TEXT NOT NULL,                       -- sha-256 over the slice
+  text_snapshot TEXT NOT NULL,                   -- denormalised for debug/test
+  heading_level INTEGER,                         -- 1-6 or NULL
+  structural_parent_piece_id INTEGER,            -- e.g. sentence → paragraph parent
+  FOREIGN KEY(revision_id) REFERENCES document_revisions(id) ON DELETE CASCADE,
+  FOREIGN KEY(structural_parent_piece_id) REFERENCES atomic_pieces(id) ON DELETE SET NULL,
+  UNIQUE(revision_id, ordinal)
+);
+CREATE INDEX idx_pieces_revision_ord ON atomic_pieces(revision_id, ordinal);
+
+-- Junction: which pieces compose which chunk. Re-anchor primitive for
+-- pins/ratings (claude-z99) — Jaccard over piece-id sets.
+CREATE TABLE chunk_pieces (
+  chunk_id INTEGER NOT NULL,
+  piece_id INTEGER NOT NULL,
+  ordinal INTEGER NOT NULL,                      -- order within the chunk
+  PRIMARY KEY(chunk_id, ordinal),
+  FOREIGN KEY(chunk_id) REFERENCES chunks(id) ON DELETE CASCADE,
+  FOREIGN KEY(piece_id) REFERENCES atomic_pieces(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_chunk_pieces_piece ON chunk_pieces(piece_id);
+
+-- v2 ALTERs on the chunks table — back-references to the run + revision,
+-- plus per-chunk hash and line/column anchors. Nullable in SQLite (ALTER
+-- ADD COLUMN limitation); the v2 migration wipes existing rows so all
+-- new inserts populate every field.
+ALTER TABLE chunks ADD COLUMN chunking_run_id INTEGER
+    REFERENCES chunking_runs(id) ON DELETE CASCADE;
+ALTER TABLE chunks ADD COLUMN revision_id INTEGER
+    REFERENCES document_revisions(id) ON DELETE CASCADE;
+ALTER TABLE chunks ADD COLUMN text_hash TEXT;
+ALTER TABLE chunks ADD COLUMN start_line INTEGER;
+ALTER TABLE chunks ADD COLUMN end_line INTEGER;
+ALTER TABLE chunks ADD COLUMN start_column INTEGER;
+ALTER TABLE chunks ADD COLUMN end_column INTEGER;
+CREATE INDEX idx_chunks_run_pos ON chunks(chunking_run_id, position);
 ```
 
 ---

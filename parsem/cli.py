@@ -21,11 +21,10 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI
 
-from parsem.domain.chunking import ChunkingConfig, chunk
-from parsem.parse.markdown_parse import parse
 from parsem.store.db import connect, migrate
-from parsem.store.documents import insert_chunks_and_sections, insert_document
+from parsem.store.documents import insert_document
 from parsem.web.app import create_app
+from parsem.web.ingest import parse_and_persist
 from parsem.web.state import build_reader_state_for_document
 
 # Spec §20: resume.warm_chunks default. Phase 2 settings.py will read
@@ -50,23 +49,18 @@ def _ensure_welcome_seeded(conn: sqlite3.Connection) -> int:
     if row is not None:
         return int(row["id"])
     text = WELCOME_PATH.read_text(encoding="utf-8")
-    output = chunk(parse(text), ChunkingConfig())
     now = datetime.now(UTC)
     document_id = insert_document(
         conn,
         title="welcome",
         original_path=WELCOME_ORIGINAL_PATH,
-        status="ready",
-        total_chunks=len(output.chunks),
+        status="processing",
         now=now,
     )
-    insert_chunks_and_sections(
-        conn,
-        document_id=document_id,
-        chunks=output.chunks,
-        sections=output.sections,
-        now=now,
-    )
+    if not parse_and_persist(conn, document_id=document_id, text=text, now=now):
+        raise RuntimeError(
+            "Welcome doc failed to ingest — substrate parse pipeline rejected it"
+        )
     return document_id
 
 
