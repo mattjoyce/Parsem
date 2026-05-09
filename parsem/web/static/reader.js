@@ -280,9 +280,26 @@
     mouseDownT = Date.now();
   });
   document.addEventListener("click", (event) => {
-    // Skip clicks on internal interactive controls — they own their
-    // own behaviour (rating buttons, pin dots once they become
-    // clickable in claude-axx.4-pindot).
+    // Rating button click — pointer-mode peer of the 1-5 keypress
+    // (§8a.1, claude-axx.3 UAT). Free, never advances. Bypasses
+    // return-first per §8a.3 (a click is itself the attention
+    // signal). settle: false because /rate doesn't move
+    // current_position — there's nothing new to anchor on.
+    const ratingButton = event.target.closest(".rating-button");
+    if (ratingButton) {
+      const rating = parseInt(ratingButton.dataset.rating, 10);
+      if (!Number.isNaN(rating)) {
+        event.preventDefault();
+        performAction(
+          { method: "POST", url: "/rate", body: { rating } },
+          { settle: false },
+        );
+      }
+      return;
+    }
+    // Skip clicks on other internal interactive controls — they
+    // own their own behaviour (pin dots once they become clickable
+    // in claude-axx.4-pindot).
     if (event.target.closest("button, .pin-dot, [role='button']")) return;
     const chunk = event.target.closest(".chunk");
     if (!chunk) return; // click outside any chunk (preview, gutter, padding)

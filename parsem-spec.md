@@ -227,7 +227,7 @@ Each row is a future implementation bead. Every surface obeys the principle abov
 | Drag-select inside a chunk               | Begin a future word-level pin span (§13.1). MVP: unbound — drag-select still does native browser text selection, no Parsem behaviour attached.                          | Free    | post-MVP                     |
 | Right-click context menu                 | Reserved. Browser default for now.                                                                                                                                     | —       | post-MVP                     |
 | Preview gutter (the blurred next chunk) **NOT** clickable | Click is swallowed. The preview is preparation (§9.5), not a button — making the 720px-wide blurred region clickable would defeat the deliberate-aim principle. The reveal symbol exists for pointer-driven advance. | —       | n/a                          |
-| Rating bar `1 · 2 · 3 · 4 · 5`           | Out of scope for the pointer model — keyboard-only in MVP per §7.4. Future bead may make digits clickable; would obey the same principle (free, never advancing past the frontier).        | Free    | post-MVP                     |
+| Rating digits `1 / 2 / 3 / 4 / 5` (right-gutter vertical stack) | Click rates the current chunk — same code path as the 1–5 keypress (§7.4). No state mutation beyond the rate event, no `current_position` change, no settle. | Free    | claude-axx.3 (live)          |
 
 ### 8a.3 Cross-cutting decisions
 
@@ -315,19 +315,20 @@ The reader screen is structured into a **persistent top bar**, a **scrolling rea
 ```
 [ ─── top bar: title · progress · token pictograph ─── ]   ← persistent, outside scroll
 
-[ left gutter (~16px) ]  [ main reading column (max 720px) ]  [ right gutter (~16px) ]
-   pin colour dots          windowed view + current chunk       reserved for future sidebar
+[ left gutter (~16px) ]  [ main reading column (max 720px) ]  [ right gutter (~28px) ]
+   pin colour dots          windowed view + current chunk       rating prompt 1/2/3/4/5
+                                                                (vertical stack, current chunk only)
 ```
 
 The **top bar** carries global session context — document title, progress (a fraction `current+1 / total` plus a thin progress bar underneath), and the token pictograph (see §12.5). It sits outside the scroll context so it never moves while the reader scrolls. The current section's heading collapses into the top bar (as a secondary line under the title) once the reader has scrolled past the first H2; above the first H2, only the document title shows.
 
 The **reading viewport** is the scrollable element that contains the main column and excludes the top bar — typically a `<div class="reader-scroll">` wrapping the partial fragment. The main column is anchored within the reading viewport so that the **current chunk's bottom edge sits at ~70% of the viewport's height**. The bottom 30% is a **preview gutter**: it renders the next chunk in a blurred, slightly faded state (~5px blur, opacity ~0.6 with a subtle continuous pulse). The preview is preparation, not a tease — it lets the eye anticipate what is coming without permitting the reader to actually read ahead. On reveal, the preview's blur lifts and its opacity climbs while the column smooth-scrolls upward to bring the new current chunk to the same 70% anchor.
 
-Above the current chunk, the main column shows the **full revealed history** as rendered HTML (Parsem-kli growing-document model — see §15). All settled chunks remain visible; the current chunk is marked with a 2px left-border accent in the gutter. Below the current chunk and above the preview gutter, a soft rating prompt `1 · 2 · 3 · 4 · 5` is always visible.
+Above the current chunk, the main column shows the **full revealed history** as rendered HTML (Parsem-kli growing-document model — see §15). All settled chunks remain visible; the current chunk is marked with a 2px left-border accent in the left gutter.
 
-The **left gutter** shows pin colour dots aligned with each chunk.
+The **left gutter** (~16px) shows pin colour dots aligned with each chunk.
 
-The **right gutter** is empty in MVP but reserved in CSS so future expansion (notes, chunk Q&A) does not reflow the main column.
+The **right gutter** (~28px) carries the rating prompt — a vertical `1 / 2 / 3 / 4 / 5` stack rendered alongside the bottom edge of the current chunk. It is muted at rest (~40% opacity), brightens on hover, and tracks the current chunk wherever it goes (frontier, click-back, conceal-back). The digits are clickable as a pointer-mode peer of the 1–5 keypress (§8a.1) — free, never advancing. The earlier inline-below-chunk placement (claude-axx.3 first cut) was moved into the gutter on UAT feedback: the inline form interrupted the reading flow when the cursor was mid-document. The right gutter remains reserved for further expansion (notes, chunk Q&A); rating is the first occupant.
 
 The window **clears** at every heading — when the reader crosses into a new section, the prior section's chunks vanish from the visible window and the new section's heading becomes the top bar's section line. Backward navigation across the boundary repopulates the prior section's window.
 

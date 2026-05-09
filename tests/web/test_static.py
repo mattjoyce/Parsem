@@ -82,6 +82,31 @@ def test_reader_js_applies_rejecting_class(reader_js_source: str) -> None:
     assert "rejecting" in reader_js_source
 
 
+def test_reader_js_binds_chunk_body_click(reader_js_source: str) -> None:
+    """claude-axx.3 / spec §8a.2: chunk-body click POSTs
+    /set-current-position with the clicked chunk's position. The
+    handler must be wired in reader.js, not optimistic about being
+    swapped in later."""
+    assert "/set-current-position" in reader_js_source
+    assert ".chunk" in reader_js_source
+
+
+def test_reader_js_binds_rating_button_click(reader_js_source: str) -> None:
+    """claude-axx.3 / spec §8a.2 / §7.4: clicking a rating digit
+    POSTs /rate. Pointer-mode peer of the 1-5 keypress."""
+    assert "rating-button" in reader_js_source
+    assert "/rate" in reader_js_source
+
+
+def test_reader_js_handles_space_resume(reader_js_source: str) -> None:
+    """claude-axx.3 / spec §8.2: Space when current < high_water
+    must route to /set-current-position(high_water) instead of
+    /reveal. The JS reads positions from the #reader-main data
+    attrs the server stamps."""
+    assert "highWaterPosition" in reader_js_source
+    assert "spaceActionForState" in reader_js_source or "current < highWater" in reader_js_source
+
+
 def test_reader_js_initial_settle_via_request_animation_frame(reader_js_source: str) -> None:
     assert "requestAnimationFrame" in reader_js_source
 

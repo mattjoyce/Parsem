@@ -5,6 +5,13 @@
   --ink: #1A1A1A;
   --column-max: 720px;
   --gutter: 16px;
+  /* Right gutter is wider than left because it carries the rating
+   * prompt's vertical 1/2/3/4/5 stack (claude-axx.3 UAT, spec §9.5).
+   * 28px is just enough for legible digits at the prompt's reduced
+   * size; the visual frame still reads as a thin gutter, not a
+   * sidebar. Kept asymmetric on purpose — the left gutter is just
+   * pin dots and stays minimal. */
+  --gutter-right: 28px;
   --top-bar-height: 64px;
   --regen-seconds: 12s;
   /* Distinct from --pin-1 (#E4B363) so the rejection signal can't be
@@ -35,7 +42,7 @@ body {
   display: grid;
   grid-template-rows: auto 1fr;
   height: 100vh;
-  max-width: calc(var(--column-max) + var(--gutter) * 2);
+  max-width: calc(var(--column-max) + var(--gutter) + var(--gutter-right));
   margin: 0 auto;
 }
 
@@ -133,7 +140,7 @@ body {
 
 .layout {
   display: grid;
-  grid-template-columns: var(--gutter) minmax(0, 1fr) var(--gutter);
+  grid-template-columns: var(--gutter) minmax(0, 1fr) var(--gutter-right);
   gap: 0;
 }
 
@@ -277,23 +284,45 @@ body {
 .pin-dot[data-pin-color="4"] { background: var(--pin-4); }
 .pin-dot[data-pin-color="5"] { background: var(--pin-5); }
 
+/* Rating prompt — vertical 1/2/3/4/5 stack in the right gutter,
+ * spatially anchored to the bottom of the current chunk (claude-
+ * axx.3 UAT, spec §9.5). Absolutely positioned so it floats out
+ * of the reading flow; .chunk is position: relative, so the
+ * prompt's `right` is measured from the chunk's right edge.
+ *
+ * right: 100% + ~6px puts the digit stack just OUTSIDE the chunk's
+ * right edge — into the right gutter zone. Clicks on each digit
+ * rate the chunk (free, non-advancing pointer surface per §8a.1).
+ */
 .rating-prompt {
+  position: absolute;
+  right: calc(-1 * var(--gutter-right) + 4px);
+  bottom: 0;
   display: flex;
-  gap: 0.3em;
-  align-items: baseline;
-  padding: 0.5em 0;
-  opacity: 0.5;
-  font-size: 0.9em;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05em;
+  opacity: 0.4;
+  font-size: 0.8em;
+  line-height: 1.1;
+  transition: opacity 120ms ease;
+  user-select: none;
 }
+.rating-prompt:hover { opacity: 0.9; }
 .rating-button {
   background: none;
   border: none;
-  padding: 0 0.2em;
+  padding: 0;
+  margin: 0;
   font: inherit;
   cursor: pointer;
   color: inherit;
+  width: 1.4em;
+  text-align: center;
+  border-radius: 2px;
+  transition: color 120ms ease, background 120ms ease;
 }
-.rating-sep { color: rgba(0, 0, 0, 0.3); user-select: none; }
+.rating-button:hover { color: var(--reject-color); }
 
 .countdown { padding: 0.5em 0; opacity: 0.7; font-size: 0.9em; }
 .countdown-reminders { opacity: 0.6; font-size: 0.85em; margin-top: 0.2em; }

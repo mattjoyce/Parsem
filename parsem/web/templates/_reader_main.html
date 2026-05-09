@@ -32,19 +32,18 @@
         >
           <span class="pin-dot"
             {% if entry.chunk.position in pin_colors %}data-pin-color="{{ pin_colors[entry.chunk.position] }}"{% endif %}
-          ></span>{{ entry.html }}</article>
-        {# Rating prompt sits directly below the current chunk wherever
-           the current chunk lives — natural at the frontier, but also
-           when the reader has clicked back (claude-axx.3) so 1–5 keys
-           land visually next to the chunk they rate. Spec §9.5. #}
-        {% if entry.chunk.position == current_position %}
-        <nav class="rating-prompt" aria-label="Rate effort">
-          {% for r in [1, 2, 3, 4, 5] %}
-          <button type="button" class="rating-button" data-rating="{{ r }}">{{ r }}</button>
-          {% if not loop.last %}<span class="rating-sep" aria-hidden="true">·</span>{% endif %}
-          {% endfor %}
-        </nav>
-        {% endif %}
+          ></span>{{ entry.html }}{# Rating prompt is a child of the
+          current chunk so it tracks the chunk wherever it goes —
+          frontier, click-back, conceal-back. It is absolutely
+          positioned into the right gutter (§9.5; claude-axx.3 UAT)
+          as a vertical 1/2/3/4/5 stack — out of the reading flow
+          but spatially coupled to the chunk it rates. The buttons
+          are clickable as a free, non-advancing pointer surface
+          per §8a.1. #}{% if entry.chunk.position == current_position %}<nav class="rating-prompt" aria-label="Rate effort">
+            {% for r in [1, 2, 3, 4, 5] %}
+            <button type="button" class="rating-button" data-rating="{{ r }}">{{ r }}</button>
+            {% endfor %}
+          </nav>{% endif %}</article>
         {% endfor %}
         {% if next_chunk %}
         {# Preview always sits at the bottom of the column — it shows
