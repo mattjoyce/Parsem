@@ -318,6 +318,22 @@ def rename_document(
     conn.commit()
 
 
+def delete_document_chunks_and_sections(
+    conn: sqlite3.Connection, document_id: int
+) -> None:
+    """Wipe a document's chunks and sections. Used by retry-parse to
+    clear prior partial state before re-running the parse pipeline.
+
+    Schema cascades clean up the dependents — `chunk_ratings` and
+    `pins` are FK'd to chunks (§21) so deleting chunks removes them
+    automatically. `reading_state` is FK'd to documents (not chunks),
+    so it is not cleared here — a failed-then-retried document has
+    no reading_state row anyway."""
+    conn.execute("DELETE FROM chunks WHERE document_id=?", (document_id,))
+    conn.execute("DELETE FROM sections WHERE document_id=?", (document_id,))
+    conn.commit()
+
+
 def delete_document(conn: sqlite3.Connection, document_id: int) -> bool:
     """Hard-delete a document. Returns True on success, False if no row
     matched the id. Spec §22; bead Parsem-eci.

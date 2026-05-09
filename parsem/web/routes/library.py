@@ -1,12 +1,13 @@
 """Library route. Spec: parsem-spec.md §9.1, §22.
 
 Beads: Parsem-3z8 (GET /library v1), Parsem-eci (POST /documents/{id}/delete),
-Parsem-kwq (POST /documents/{id}/rename).
+Parsem-kwq (POST /documents/{id}/rename), Parsem-pnk (POST /documents/{id}/retry-parse).
 
 Handlers stay thin — the SQL helpers in `parsem.store.documents` carry
-ordering and cascade semantics; here we only orchestrate transport and
-side effects (file unlink, in-memory state reset on self-delete, partial
-fragment rendering on rename).
+ordering and cascade semantics; the parse pipeline lives in
+`parsem.web.ingest`. Here we only orchestrate transport and side
+effects (file unlink, in-memory state reset on self-delete, partial
+fragment rendering on rename, file re-read on retry-parse).
 """
 
 from __future__ import annotations
@@ -21,11 +22,14 @@ from pydantic import BaseModel
 
 from parsem.store.documents import (
     delete_document,
+    delete_document_chunks_and_sections,
     list_library_rows,
     load_document,
+    mark_document_failed,
     progress_percent_for_document,
     rename_document,
 )
+from parsem.web.ingest import parse_and_persist
 from parsem.web.state import empty_reader_state
 
 _TITLE_MAX_LEN = 200
@@ -104,3 +108,28 @@ def post_rename(
             "title_max_len": _TITLE_MAX_LEN,
         },
     )
+
+
+@router.post("/documents/{document_id}/retry-parse")
+def post_retry_parse(document_id: int, request: Request) -> RedirectResponse:
+    """Re-run the parse pipeline on the persisted original .md. Wipes
+    any partial chunks/sections from the prior attempt, re-parses, and
+    flips status back to 'ready' on success. Re-failures stay 'failed'
+    with the new reason. Spec §17.2; bead Parsem-pnk."""
+    conn = request.app.state.db
+    if load_document(conn, document_id) is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    originals_dir: Path = request.app.state.originals_dir
+    file_path = originals_dir / f"{document_id}.md"
+    now = datetime.now(UTC)
+    if not file_path.exists():
+        mark_document_failed(
+            conn, document_id, reason="Original file missing.", now=now
+        )
+        return RedirectResponse(url="/library", status_code=302)
+
+    text = file_path.read_text(encoding="utf-8")
+    delete_document_chunks_and_sections(conn, document_id)
+    parse_and_persist(conn, document_id=document_id, text=text, now=now)
+    return RedirectResponse(url="/library", status_code=302)

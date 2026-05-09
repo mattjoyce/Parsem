@@ -22,15 +22,11 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from parsem.domain.chunking import ChunkingConfig, chunk
-from parsem.parse.markdown_parse import parse
 from parsem.store.documents import (
-    insert_chunks_and_sections,
     insert_document,
-    mark_document_failed,
-    mark_document_ready,
     update_document_original_path,
 )
+from parsem.web.ingest import parse_and_persist
 
 router = APIRouter()
 
@@ -76,30 +72,8 @@ async def post_upload(
         conn, document_id, original_path=str(file_path), now=now
     )
 
-    try:
-        output = chunk(parse(text), ChunkingConfig())
-    except Exception as exc:
-        mark_document_failed(
-            conn, document_id, reason=f"Parse failed: {exc}", now=now
-        )
+    if not parse_and_persist(conn, document_id=document_id, text=text, now=now):
         return RedirectResponse(url="/library", status_code=302)
-
-    if not output.chunks:
-        mark_document_failed(
-            conn, document_id, reason="Document is empty.", now=now
-        )
-        return RedirectResponse(url="/library", status_code=302)
-
-    insert_chunks_and_sections(
-        conn,
-        document_id=document_id,
-        chunks=output.chunks,
-        sections=output.sections,
-        now=now,
-    )
-    mark_document_ready(
-        conn, document_id, total_chunks=len(output.chunks), now=now
-    )
     return RedirectResponse(
         url=f"/documents/{document_id}/reader", status_code=302
     )
