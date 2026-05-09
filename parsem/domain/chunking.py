@@ -39,6 +39,10 @@ class ChunkingConfig:
     wpm_user_scaling: float = 1.0
     code_handling: Literal["block", "prose"] = "block"
     list_handling: Literal["item", "block", "prose"] = "block"
+    # When a paragraph ending in ':' is immediately followed by a list,
+    # absorb the paragraph into the merged list chunk so the lead-in and
+    # its enumeration read as one unit. Bead Parsem-5lx.
+    absorb_colon_lead_in: bool = True
 
 
 @dataclass(frozen=True)
@@ -101,7 +105,15 @@ def chunk(blocks: list[ParsedBlock], config: ChunkingConfig) -> ChunkerOutput:
             run_end = i
             while run_end + 1 < len(blocks) and blocks[run_end + 1].type == "list_item":
                 run_end += 1
-            chunks.append(_merge_list_chunk(blocks[i : run_end + 1], config, len(chunks)))
+            lead_in = _pop_colon_lead_in(chunks, config)
+            chunks.append(
+                _merge_list_chunk(
+                    blocks[i : run_end + 1],
+                    config,
+                    len(chunks),
+                    lead_in=lead_in,
+                )
+            )
             i = run_end + 1
         else:
             chunks.append(_solo_chunk(block, config, len(chunks)))
@@ -110,19 +122,59 @@ def chunk(blocks: list[ParsedBlock], config: ChunkingConfig) -> ChunkerOutput:
     return ChunkerOutput(chunks=chunks, sections=sections)
 
 
+def _pop_colon_lead_in(
+    chunks: list[Chunk], config: ChunkingConfig
+) -> Chunk | None:
+    """Return-and-remove the most recent chunk if it qualifies as a
+    list lead-in: a paragraph chunk whose trimmed text ends with ':'.
+    Bead Parsem-5lx, spec §11 (chunking rules).
+
+    The colon must be the final non-whitespace character so a
+    mid-sentence ':' (e.g., 'Note: this is fine.') does not falsely
+    trigger absorption."""
+    if not config.absorb_colon_lead_in or not chunks:
+        return None
+    last = chunks[-1]
+    if last.lead_token_type != "paragraph":
+        return None
+    if not last.text.rstrip().endswith(":"):
+        return None
+    return chunks.pop()
+
+
 def _merge_list_chunk(
-    items: list[ParsedBlock], config: ChunkingConfig, position: int
+    items: list[ParsedBlock],
+    config: ChunkingConfig,
+    position: int,
+    *,
+    lead_in: Chunk | None = None,
 ) -> Chunk:
     """Merge a run of consecutive `list_item` blocks into one chunk —
-    a list reads as one unit, not item-per-page.
+    a list reads as one unit, not item-per-page. When `lead_in` is
+    provided, prepend its text and adopt its source_offset_start so
+    the colon-terminated paragraph and the list it introduces read as
+    one chunk (Parsem-5lx).
 
     Empty-string join is safe because `markdown_parse._token_to_block`
     slices each block as `source[line_starts[start]:line_starts[end]]`,
     so every non-final block's text already ends with `\\n`."""
-    combined = "".join(item.text for item in items)
+    items_text = "".join(item.text for item in items)
+    if lead_in is None:
+        combined = items_text
+        source_offset_start = items[0].source_offset_start
+    else:
+        # Render a blank line between lead-in and the list so the
+        # markdown renderer (Parsem-kli) treats them as adjacent
+        # blocks, not a single line. Skip the separator if the
+        # lead-in's source slice already supplies it.
+        sep = "" if lead_in.text.endswith("\n\n") else (
+            "\n" if lead_in.text.endswith("\n") else "\n\n"
+        )
+        combined = lead_in.text + sep + items_text
+        source_offset_start = lead_in.source_offset_start
     return Chunk(
         position=position,
-        source_offset_start=items[0].source_offset_start,
+        source_offset_start=source_offset_start,
         source_offset_end=items[-1].source_offset_end,
         text=combined,
         lead_token_type="list_item",
