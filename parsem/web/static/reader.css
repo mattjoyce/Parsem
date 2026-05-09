@@ -158,7 +158,14 @@ body {
   margin: 0;
   padding: 0;
 }
-.chunk--settled { opacity: 1.0; }
+.chunk--settled {
+  opacity: 1.0;
+  /* Settled chunks behind the frontier are clickable to re-focus the
+   * reader on them (claude-axx.3, spec §8a.2). The cursor: text
+   * fallback during drag is browser-native — it overrides this
+   * pointer hint while the user is selecting. */
+  cursor: pointer;
+}
 /* The padding/margin pair places the bar in the gutter without
  * shifting the body text — settled and current chunks sit on the
  * same x-axis as if the bar weren't there. The bar is the ONLY
@@ -168,6 +175,10 @@ body {
   border-left: 2px solid rgba(0, 0, 0, 0.35);
   padding-left: 0.5em;
   margin-left: -0.5em;
+  /* Current chunk is not a click target — clicking it would set
+   * current to itself, a no-op. cursor: default keeps the chunk
+   * looking inert under the pointer (spec §8a.3). */
+  cursor: default;
 }
 
 /* Markdown elements inside .chunk — compact defaults so the revealed

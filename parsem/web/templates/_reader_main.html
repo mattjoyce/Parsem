@@ -1,4 +1,6 @@
-<main id="reader-main">
+<main id="reader-main"
+      data-current-position="{{ current_position }}"
+      data-high-water-position="{{ high_water_position }}">
   <header class="top-bar">
     <div class="top-bar__identity">
       <h1 class="doc-title">{{ title }}</h1>
@@ -31,14 +33,25 @@
           <span class="pin-dot"
             {% if entry.chunk.position in pin_colors %}data-pin-color="{{ pin_colors[entry.chunk.position] }}"{% endif %}
           ></span>{{ entry.html }}</article>
-        {% endfor %}
+        {# Rating prompt sits directly below the current chunk wherever
+           the current chunk lives — natural at the frontier, but also
+           when the reader has clicked back (claude-axx.3) so 1–5 keys
+           land visually next to the chunk they rate. Spec §9.5. #}
+        {% if entry.chunk.position == current_position %}
         <nav class="rating-prompt" aria-label="Rate effort">
           {% for r in [1, 2, 3, 4, 5] %}
           <button type="button" class="rating-button" data-rating="{{ r }}">{{ r }}</button>
           {% if not loop.last %}<span class="rating-sep" aria-hidden="true">·</span>{% endif %}
           {% endfor %}
         </nav>
+        {% endif %}
+        {% endfor %}
         {% if next_chunk %}
+        {# Preview always sits at the bottom of the column — it shows
+           the chunk past the frontier (high_water + 1), not past
+           current_position. When the reader has clicked back, the
+           preview stays at the document tail rather than re-rendering
+           a chunk that is already settled-visible. Spec §9.5, §8a.1. #}
         <div class="preview" data-chunk-position="{{ next_chunk.chunk.position }}" aria-hidden="true">{{ next_chunk.html }}</div>
         {% endif %}
       </section>

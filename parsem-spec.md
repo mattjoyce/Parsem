@@ -178,6 +178,14 @@ This makes Space self-teaching: a reader who scrolled back and presses Space see
 
 The rule applies only to action keys. Manual scroll (mouse wheel, Page Down) is sovereign and never auto-corrected.
 
+### 8.2 Space-resume rule
+
+When `current_position < high_water_position` — the reader has clicked a settled chunk (§8a.2), or pin-jumped, or backspace-concealed — the *first* press of Space jumps `current_position` to `high_water_position` for free, without spending a token. The *next* press attempts a paid reveal at `high_water_position + 1` as normal.
+
+Read the user's literal phrasing *"space takes me to the next reveal"* as *"space takes me to the place where the next reveal will happen"* rather than *"space spends a token immediately."* Resume-then-reveal is two presses; one press never spends a token from a back-scrolled position. Composes with `'`/Esc (return-first, §8.1) and with `'` (return-to-pre-jump, §13.4).
+
+This rule is enforced in JS: the keyboard layer reads `current_position` and `high_water_position` from the `#reader-main` data attributes the server stamps on each render, and routes Space accordingly. The `/reveal` server endpoint is unchanged — when JS intercepts the first press of Space-while-behind it issues a `POST /set-current-position` (§8a.2) with `position = high_water_position` instead.
+
 ---
 
 ## 8a. Pointer Interactions

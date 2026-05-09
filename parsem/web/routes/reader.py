@@ -37,6 +37,10 @@ class JumpBody(BaseModel):
     color_mode: Literal["any", "same_as_current"] = "any"
 
 
+class SetCurrentPositionBody(BaseModel):
+    position: int
+
+
 router = APIRouter()
 
 
@@ -166,6 +170,62 @@ def post_jump_to_pin(request: Request, body: JumpBody) -> HTMLResponse:
     state.pre_jump_position = state.current_position
     state.current_position = target
     state.last_active_pin_color = state.pin_colors.get(target, state.last_active_pin_color)
+    response = _render_partial(request, state)
+    response.headers["X-Reveal-Outcome"] = "advanced_free"
+    return response
+
+
+@router.post("/set-current-position", response_class=HTMLResponse)
+def post_set_current_position(
+    request: Request, body: SetCurrentPositionBody
+) -> HTMLResponse:
+    """Move `current_position` backward (or to the frontier) without
+    spending a token. Spec §8a.2 — chunk-body click and space-resume
+    both land here.
+
+    Validates the position against [0, high_water_position]. Forward
+    of the frontier is rejected with 422 (the pointer model never
+    lets reading skip ahead — §8a.1).
+
+    State changes:
+      - new == old current             : no-op
+      - new == high_water_position     : current := new, pre_jump := None
+                                          (reader is back at the frontier;
+                                          no further `'`/Esc return makes
+                                          sense)
+      - otherwise                      : current := new; capture
+                                          pre_jump_position := old current
+                                          ONLY if pre_jump is currently
+                                          null (§8a.3 — preserves the
+                                          original spine across multiple
+                                          back-clicks)
+
+    No event log entry — pointer-only navigation does not write to the
+    event log (§8a.3, mirrors `/jump-to-pin` which also does not log).
+    """
+    state = _state(request)
+    if not 0 <= body.position < len(state.chunks):
+        raise HTTPException(
+            status_code=422,
+            detail=f"position {body.position} out of range [0, {len(state.chunks) - 1}]",
+        )
+    if body.position > state.high_water_position:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"position {body.position} is past high_water "
+                f"({state.high_water_position}); pointer cannot advance"
+            ),
+        )
+    if body.position == state.current_position:
+        return _render_partial(request, state)
+    if body.position == state.high_water_position:
+        state.current_position = body.position
+        state.pre_jump_position = None
+    else:
+        if state.pre_jump_position is None:
+            state.pre_jump_position = state.current_position
+        state.current_position = body.position
     response = _render_partial(request, state)
     response.headers["X-Reveal-Outcome"] = "advanced_free"
     return response

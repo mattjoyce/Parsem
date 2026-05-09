@@ -33,6 +33,7 @@ def test_reader_renders_chunks_with_data_chunk_position(
     revealed chunks 0..7 in the DOM — not just the prior K-window
     (the Parsem-apa section-clamp is gone)."""
     state.current_position = 7
+    state.high_water_position = 7
     response = client.get("/documents/1/reader")
     for pos in range(0, 8):
         assert f'data-chunk-position="{pos}"' in response.text
@@ -44,6 +45,7 @@ def test_reader_marks_current_chunk_distinctly_from_settled(
     """Any non-zero position inside a section gives at least one
     settled chunk plus the current one."""
     state.current_position = 7
+    state.high_water_position = 7
     response = client.get("/documents/1/reader")
     assert "chunk--current" in response.text
     assert "chunk--settled" in response.text
@@ -55,6 +57,7 @@ def test_reader_renders_sticky_heading_for_current_section(
     # Position the reader inside a non-prologue section: jump to the last chunk
     # of welcome.md, which lives under the final H2 ("Tips for deep reading").
     state.current_position = len(state.chunks) - 1
+    state.high_water_position = len(state.chunks) - 1
     response = client.get("/documents/1/reader")
     assert 'id="section-heading"' in response.text
     heading_html = response.text.split('id="section-heading"', 1)[1].split("</header>", 1)[0]
@@ -115,6 +118,7 @@ def test_reader_renders_top_bar_with_document_title(client: TestClient) -> None:
 
 def test_reader_top_bar_shows_progress_fraction(client: TestClient, state: ReaderState) -> None:
     state.current_position = 4
+    state.high_water_position = 4
     response = client.get("/documents/1/reader")
     total = len(state.chunks)
     assert f"5 / {total}" in response.text or f"5/{total}" in response.text
@@ -149,6 +153,7 @@ def test_preview_block_has_data_chunk_position_for_next(
     client: TestClient, state: ReaderState
 ) -> None:
     state.current_position = 3
+    state.high_water_position = 3
     response = client.get("/documents/1/reader")
     assert 'class="preview"' in response.text
     assert 'data-chunk-position="4"' in response.text
@@ -156,6 +161,7 @@ def test_preview_block_has_data_chunk_position_for_next(
 
 def test_reader_omits_preview_at_end_of_document(client: TestClient, state: ReaderState) -> None:
     state.current_position = len(state.chunks) - 1
+    state.high_water_position = len(state.chunks) - 1
     response = client.get("/documents/1/reader")
     assert 'class="preview"' not in response.text
 
@@ -168,6 +174,63 @@ def test_preview_appears_after_current_chunk_and_rating_prompt(
     preview_idx = response.text.find('class="preview"')
     assert rating_idx >= 0 and preview_idx >= 0
     assert preview_idx > rating_idx
+
+
+def test_reader_after_click_back_keeps_all_paid_chunks_visible(
+    client: TestClient, state: ReaderState
+) -> None:
+    """Click-back (claude-axx.3) drops current_position behind
+    high_water_position. The growing-document model (Parsem-kli, §15)
+    keeps every paid chunk in the DOM regardless of where the cursor
+    sits — the reading trail must not shorten when reviewing."""
+    state.high_water_position = 7
+    state.current_position = 3  # reader clicked back from 7 to 3
+    response = client.get("/documents/1/reader")
+    for pos in range(0, 8):
+        assert f'data-chunk-position="{pos}"' in response.text
+
+
+def test_reader_after_click_back_renders_rating_prompt_below_current(
+    client: TestClient, state: ReaderState
+) -> None:
+    """Spec §9.5: rating prompt sits 'below the current chunk and above
+    the preview gutter.' When current_position < high_water_position
+    (click-back state), the rating prompt must follow the current
+    chunk in the DOM — not the last visible chunk."""
+    state.high_water_position = 7
+    state.current_position = 3
+    response = client.get("/documents/1/reader")
+    rating_idx = response.text.find('class="rating-prompt"')
+    chunk_3_idx = response.text.find('data-chunk-position="3"')
+    chunk_4_idx = response.text.find('data-chunk-position="4"')
+    assert rating_idx > chunk_3_idx
+    assert rating_idx < chunk_4_idx
+
+
+def test_reader_after_click_back_preview_targets_post_high_water(
+    client: TestClient, state: ReaderState
+) -> None:
+    """Preview shows the chunk past the FRONTIER, not past the cursor.
+    With current=3 and high_water=7, Space resumes to 7 then advances
+    to 8 — so the preview must show chunk 8."""
+    state.high_water_position = 7
+    state.current_position = 3
+    response = client.get("/documents/1/reader")
+    assert 'class="preview"' in response.text
+    assert 'data-chunk-position="8"' in response.text
+
+
+def test_reader_main_carries_high_water_data_attr(
+    client: TestClient, state: ReaderState
+) -> None:
+    """JS reads current and high_water from #reader-main data attrs to
+    decide chunk-click and space-resume behaviour (§8a, claude-axx.3).
+    Both must render on every server response."""
+    state.high_water_position = 5
+    state.current_position = 2
+    response = client.get("/documents/1/reader")
+    assert 'data-current-position="2"' in response.text
+    assert 'data-high-water-position="5"' in response.text
 
 
 def test_reader_full_page_loads_static_js_and_css(client: TestClient) -> None:

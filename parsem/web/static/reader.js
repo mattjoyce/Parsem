@@ -1,6 +1,7 @@
 // Parsem reader — keyboard handler + interaction motion.
-// Spec: parsem-spec.md §8 (keyboard), §8.1 (return-first), §9.5 (eye line),
-// §12.5 (empty-bucket motion). Beads: Parsem-gx3, Parsem-0if.
+// Spec: parsem-spec.md §8 (keyboard), §8.1 (return-first), §8a (pointer),
+// §9.5 (eye line), §12.5 (empty-bucket motion). Beads: Parsem-gx3,
+// Parsem-0if, claude-axx.3 (chunk-body click + space-resume).
 //
 // Pure transport. JS reads server-truth via responses; no bucket math, no
 // chunking, no pin-cycle math. Listener bound to document so outerHTML
@@ -12,6 +13,8 @@
   const ANCHOR_RATIO = 0.7;          // bottom edge of current chunk lands at 70%
   const CANONICAL_TOLERANCE_PX = 20; // ±20px band counts as "at canonical"
   const OUTCOME_BUCKET_EMPTY = "bucket_empty"; // matches RevealReason in domain/economy.py
+  const CLICK_DRAG_PX = 4;           // §8a.3 click vs drag-select threshold
+  const CLICK_HOLD_MS = 250;         // §8a.3 click vs drag-select threshold
 
   // The contract: each entry maps a key (or trigger) to a fetch dispatch.
   // Editing this table is how new keys are added — explicit beats magical.
@@ -181,6 +184,41 @@
     return el && el.matches && el.matches("input, textarea, [contenteditable]");
   }
 
+  // Read current/high_water from #reader-main data attrs. Returns NaN
+  // for either when the element is missing or values aren't set —
+  // callers must Number.isNaN-guard. The server's _reader_main.html
+  // partial writes these on every render so each fetch refreshes them.
+  function readerPositions() {
+    const main = document.getElementById("reader-main");
+    if (!main) return { current: NaN, highWater: NaN };
+    return {
+      current: parseInt(main.dataset.currentPosition, 10),
+      highWater: parseInt(main.dataset.highWaterPosition, 10),
+    };
+  }
+
+  // Space-resume (§8a.1, claude-axx.3): when the reader is behind the
+  // frontier (current < high_water — happened via chunk-body click or
+  // pin jump or conceal), Space's first press resumes to the frontier
+  // instead of trying to advance from the current chunk. Pointer-mode
+  // peer of the spec §8.1 return-first rule, but spelled in JS because
+  // the server's /reveal can't tell "behind by 1 from natural reading"
+  // from "behind by 7 because user clicked back."
+  function spaceActionForState() {
+    const { current, highWater } = readerPositions();
+    if (Number.isNaN(current) || Number.isNaN(highWater)) {
+      return ACTIONS[" "];
+    }
+    if (current < highWater) {
+      return {
+        method: "POST",
+        url: "/set-current-position",
+        body: { position: highWater },
+      };
+    }
+    return ACTIONS[" "];
+  }
+
   document.addEventListener("keydown", (event) => {
     if (isTypingTarget(event.target)) return;
 
@@ -195,10 +233,66 @@
       return;
     }
 
+    if (event.key === " ") {
+      event.preventDefault();
+      dispatch(spaceActionForState());
+      return;
+    }
+
     const action = ACTIONS[event.key];
     if (!action) return;
     event.preventDefault();
     dispatch(action);
+  });
+
+  // Chunk-body click (§8a.2, claude-axx.3): clicking a settled chunk
+  // sets current_position to that chunk so subsequent rate / pin acts
+  // there. Pointer is for review — never advances past the frontier,
+  // never costs a token. Drag-select is preserved by the px/ms
+  // threshold below: a real drag does its native browser thing and
+  // this handler bows out.
+  let mouseDownX = 0;
+  let mouseDownY = 0;
+  let mouseDownT = 0;
+  document.addEventListener("mousedown", (event) => {
+    if (event.button !== 0) return; // left button only
+    mouseDownX = event.clientX;
+    mouseDownY = event.clientY;
+    mouseDownT = Date.now();
+  });
+  document.addEventListener("click", (event) => {
+    // Skip clicks on internal interactive controls — they own their
+    // own behaviour (rating buttons, pin dots once they become
+    // clickable in claude-axx.4-pindot).
+    if (event.target.closest("button, .pin-dot, [role='button']")) return;
+    const chunk = event.target.closest(".chunk");
+    if (!chunk) return; // click outside any chunk (preview, gutter, padding)
+    // Drag-select disambiguation per §8a.3 — anything past the
+    // movement / hold threshold is treated as text selection and the
+    // browser keeps its native selection.
+    const dx = Math.abs(event.clientX - mouseDownX);
+    const dy = Math.abs(event.clientY - mouseDownY);
+    const dt = Date.now() - mouseDownT;
+    if (dx > CLICK_DRAG_PX || dy > CLICK_DRAG_PX || dt > CLICK_HOLD_MS) return;
+    // The click target IS a chunk and the gesture IS a click. If the
+    // user has any selected text, leave their selection alone — they
+    // probably meant to copy, not navigate.
+    const sel = window.getSelection && window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    const position = parseInt(chunk.dataset.chunkPosition, 10);
+    const { current, highWater } = readerPositions();
+    if (Number.isNaN(position) || Number.isNaN(highWater)) return;
+    // Forward of frontier never advances (§8a.1) — server would 422.
+    // Click on the current chunk is a no-op visually; skip the round
+    // trip rather than re-render to the same state.
+    if (position > highWater) return;
+    if (position === current) return;
+    event.preventDefault();
+    dispatch({
+      method: "POST",
+      url: "/set-current-position",
+      body: { position },
+    });
   });
 
   // Initial anchor on page load. requestAnimationFrame ensures layout has

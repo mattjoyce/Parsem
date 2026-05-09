@@ -43,19 +43,19 @@ def _section(start: int, end: int, heading_pos: int | None = None) -> Section:
 # ─── revealed_chunks: growing-document model (Parsem-kli) ─────────────
 
 
-def test_revealed_chunks_at_position_zero_returns_just_the_current() -> None:
+def test_revealed_chunks_at_high_water_zero_returns_just_the_first() -> None:
     chunks = [_chunk(i) for i in range(10)]
-    assert [c.position for c in revealed_chunks(chunks, current=0)] == [0]
+    assert [c.position for c in revealed_chunks(chunks, high_water=0)] == [0]
 
 
-def test_revealed_chunks_mid_document_returns_all_prior_plus_current() -> None:
+def test_revealed_chunks_mid_document_returns_all_paid() -> None:
     chunks = [_chunk(i) for i in range(10)]
-    assert [c.position for c in revealed_chunks(chunks, current=4)] == [0, 1, 2, 3, 4]
+    assert [c.position for c in revealed_chunks(chunks, high_water=4)] == [0, 1, 2, 3, 4]
 
 
 def test_revealed_chunks_at_end_of_document_returns_every_chunk() -> None:
     chunks = [_chunk(i) for i in range(5)]
-    assert [c.position for c in revealed_chunks(chunks, current=4)] == [0, 1, 2, 3, 4]
+    assert [c.position for c in revealed_chunks(chunks, high_water=4)] == [0, 1, 2, 3, 4]
 
 
 def test_revealed_chunks_does_not_clamp_at_section_boundaries() -> None:
@@ -64,7 +64,21 @@ def test_revealed_chunks_does_not_clamp_at_section_boundaries() -> None:
     the Parsem-apa section-clamp)."""
     chunks = [_chunk(i) for i in range(10)]
     # Two sections: [0..4] and [5..9]. At position 7, all of [0..7] visible.
-    assert [c.position for c in revealed_chunks(chunks, current=7)] == [0, 1, 2, 3, 4, 5, 6, 7]
+    assert [c.position for c in revealed_chunks(chunks, high_water=7)] == [0, 1, 2, 3, 4, 5, 6, 7]
+
+
+def test_revealed_chunks_after_click_back_still_shows_paid_territory() -> None:
+    """When the reader clicks back (claude-axx.3), `current_position`
+    drops behind `high_water_position`. The growing-document model
+    (§15) keeps every paid chunk visible — the trail must not shorten
+    just because the cursor moved back. Anchoring on `high_water`,
+    not `current`, is what guarantees this."""
+    chunks = [_chunk(i) for i in range(10)]
+    # Reader paid up to chunk 7, clicked back to chunk 3 — chunks 4..7
+    # are still in the DOM so the back-scrub trail stays intact.
+    assert [c.position for c in revealed_chunks(chunks, high_water=7)] == [
+        0, 1, 2, 3, 4, 5, 6, 7,
+    ]
 
 
 # ─── render_chunk_html: markdown → HTML ──────────────────────────────
@@ -162,19 +176,19 @@ def test_document_title_returns_untitled_when_no_h1_exists() -> None:
     assert document_title(chunks) == "Untitled"
 
 
-def test_next_chunk_returns_chunk_at_current_plus_one() -> None:
+def test_next_chunk_returns_chunk_at_high_water_plus_one() -> None:
     chunks = [_chunk(0), _chunk(1), _chunk(2)]
-    assert next_chunk(chunks, current=0) is chunks[1]
-    assert next_chunk(chunks, current=1) is chunks[2]
+    assert next_chunk(chunks, high_water=0) is chunks[1]
+    assert next_chunk(chunks, high_water=1) is chunks[2]
 
 
 def test_next_chunk_returns_none_at_end_of_document() -> None:
     chunks = [_chunk(0), _chunk(1)]
-    assert next_chunk(chunks, current=1) is None
+    assert next_chunk(chunks, high_water=1) is None
 
 
 def test_next_chunk_returns_none_for_empty_chunks() -> None:
-    assert next_chunk([], current=0) is None
+    assert next_chunk([], high_water=0) is None
 
 
 def test_dot_classes_full_bucket_emits_only_filled_with_zero_delay() -> None:
