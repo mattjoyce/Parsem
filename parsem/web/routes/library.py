@@ -11,6 +11,7 @@ fragment rendering on rename).
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -40,7 +41,11 @@ router = APIRouter()
 def get_library(request: Request) -> HTMLResponse:
     docs = list_documents_for_library(request.app.state.db)
     templates = request.app.state.templates
-    return templates.TemplateResponse(request, "library.html", {"docs": docs})
+    return templates.TemplateResponse(
+        request,
+        "library.html",
+        {"docs": docs, "title_max_len": _TITLE_MAX_LEN},
+    )
 
 
 @router.post("/documents/{document_id}/delete")
@@ -50,10 +55,8 @@ def post_delete(document_id: int, request: Request) -> RedirectResponse:
     deleted is the one currently held in `app.state.reader`, swap to
     the empty placeholder so the next reader-open rebuilds from DB."""
     conn = request.app.state.db
-    if load_document(conn, document_id) is None:
+    if not delete_document(conn, document_id):
         raise HTTPException(status_code=404, detail="Document not found")
-
-    delete_document(conn, document_id)
 
     originals_dir: Path = request.app.state.originals_dir
     (originals_dir / f"{document_id}.md").unlink(missing_ok=True)
@@ -73,7 +76,8 @@ def post_rename(
     reloading the page. Validation: trim whitespace, then non-empty
     and ≤200 chars; both reject with 422."""
     conn = request.app.state.db
-    if load_document(conn, document_id) is None:
+    doc = load_document(conn, document_id)
+    if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
 
     title = body.title.strip()
@@ -85,9 +89,12 @@ def post_rename(
             detail=f"Title cannot exceed {_TITLE_MAX_LEN} characters.",
         )
 
-    rename_document(conn, document_id, title=title, now=datetime.now(UTC))
-    updated = load_document(conn, document_id)
+    now = datetime.now(UTC)
+    rename_document(conn, document_id, title=title, now=now)
+    updated = replace(doc, title=title, updated_at=now)
     templates = request.app.state.templates
     return templates.TemplateResponse(
-        request, "_library_row.html", {"doc": updated}
+        request,
+        "_library_row.html",
+        {"doc": updated, "title_max_len": _TITLE_MAX_LEN},
     )

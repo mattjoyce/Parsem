@@ -9,7 +9,8 @@
   </td>
   <td class="library-col-actions">
     <button type="button" class="library-rename" data-doc-id="{{ doc.id }}"
-            data-current-title="{{ doc.title }}">Rename</button>
+            data-current-title="{{ doc.title }}"
+            data-max-len="{{ title_max_len }}">Rename</button>
     <form method="post" action="/documents/{{ doc.id }}/delete"
           onsubmit="return confirm('Delete &quot;{{ doc.title }}&quot;? This cannot be undone.');">
       <button type="submit" class="library-delete">Delete</button>

@@ -19,7 +19,8 @@
     const input = document.createElement("input");
     input.type = "text";
     input.value = currentTitle;
-    input.maxLength = 200;
+    const maxLen = parseInt(button.dataset.maxLen, 10);
+    if (maxLen > 0) input.maxLength = maxLen;
     input.className = "library-rename-input";
     input.dataset.original = currentTitle;
     titleCell.replaceChild(input, link);
