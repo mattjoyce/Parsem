@@ -29,6 +29,12 @@ class RateBody(BaseModel):
 
 class JumpBody(BaseModel):
     direction: Literal["next", "prev"]
+    # color_mode controls the pin filter:
+    #   "any"               — every pin is a candidate; spec §8 `]` / `[`
+    #   "same_as_current"   — only pins matching the colour of the current
+    #                          chunk's pin; no-op when the current chunk
+    #                          has no pin; spec §8 `}` / `{`
+    color_mode: Literal["any", "same_as_current"] = "any"
 
 
 router = APIRouter()
@@ -119,14 +125,25 @@ def post_pin(request: Request) -> HTMLResponse:
     return _render_partial(request, state)
 
 
-def _find_jump_target(state: ReaderState, direction: str) -> int | None:
-    """Return chunk position of the next/prev pin (filtered by active colour
-    if set, else any colour), with wrap-around. None when the jump would not
-    move (no pins, or the only matching pin is at current_position).
+def _find_jump_target(
+    state: ReaderState, direction: str, color_mode: str
+) -> int | None:
+    """Return the chunk position of the next/prev pin under `color_mode`,
+    with wrap-around. None when the jump would not move — no pins match,
+    or the only matching pin is at `current_position`.
+
+    Spec §8 keyboard table:
+      "any"               — `]` / `[`  no colour filter, any pin matches
+      "same_as_current"   — `}` / `{`  filter to pins of the same colour
+                                       as the current chunk's pin; no-op
+                                       when the current chunk has no pin
     """
     pins = state.pin_colors
-    if state.last_active_pin_color is not None:
-        pins = {p: c for p, c in pins.items() if c == state.last_active_pin_color}
+    if color_mode == "same_as_current":
+        current_color = pins.get(state.current_position)
+        if current_color is None:
+            return None
+        pins = {p: c for p, c in pins.items() if c == current_color}
     if not pins:
         return None
     positions = sorted(pins)
@@ -143,7 +160,7 @@ def _find_jump_target(state: ReaderState, direction: str) -> int | None:
 @router.post("/jump-to-pin", response_class=HTMLResponse)
 def post_jump_to_pin(request: Request, body: JumpBody) -> HTMLResponse:
     state = _state(request)
-    target = _find_jump_target(state, body.direction)
+    target = _find_jump_target(state, body.direction, body.color_mode)
     if target is None:
         return _render_partial(request, state)
     state.pre_jump_position = state.current_position

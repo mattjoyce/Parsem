@@ -25,8 +25,10 @@
     "5":         { method: "POST", url: "/rate", body: { rating: 5 } },
     "p":         { method: "POST", url: "/pin" },
     "P":         { method: "POST", url: "/pin" },
-    "]":         { method: "POST", url: "/jump-to-pin", body: { direction: "next" } },
-    "[":         { method: "POST", url: "/jump-to-pin", body: { direction: "prev" } },
+    "]":         { method: "POST", url: "/jump-to-pin", body: { direction: "next", color_mode: "any" } },
+    "[":         { method: "POST", url: "/jump-to-pin", body: { direction: "prev", color_mode: "any" } },
+    "}":         { method: "POST", url: "/jump-to-pin", body: { direction: "next", color_mode: "same_as_current" } },
+    "{":         { method: "POST", url: "/jump-to-pin", body: { direction: "prev", color_mode: "same_as_current" } },
     "'":         { method: "POST", url: "/return" },
   };
 
