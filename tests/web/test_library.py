@@ -154,3 +154,100 @@ def test_library_ties_break_alphabetically_by_title(
     pos_b = body.index(f"/documents/{b}/reader")
     pos_c = body.index(f"/documents/{c}/reader")
     assert pos_a < pos_b < pos_c
+
+
+# Parsem-5oi — Library progress % column
+
+
+def _set_position(
+    conn: sqlite3.Connection,
+    document_id: int,
+    *,
+    current: int,
+    total: int,
+) -> None:
+    conn.execute(
+        "UPDATE documents SET total_chunks=? WHERE id=?",
+        (total, document_id),
+    )
+    conn.execute(
+        "INSERT INTO reading_state (document_id, high_water_position,"
+        " current_position, last_event_id_applied, updated_at)"
+        " VALUES (?, ?, ?, NULL, ?)",
+        (document_id, current, current, T0.isoformat()),
+    )
+    conn.commit()
+
+
+def test_library_renders_progress_percent_for_never_opened_doc(
+    empty_app: tuple[TestClient, sqlite3.Connection],
+) -> None:
+    """Never opened == no reading_state row → 0%."""
+    client, conn = empty_app
+    doc_id = _insert(conn, title="never-opened", status="ready", created_at=T0)
+    conn.execute("UPDATE documents SET total_chunks=10 WHERE id=?", (doc_id,))
+    conn.commit()
+    body = client.get("/library").text
+    assert "0%" in body
+
+
+def test_library_progress_at_position_zero_with_ten_chunks_is_ten_percent(
+    empty_app: tuple[TestClient, sqlite3.Connection],
+) -> None:
+    """current_position 0 with 10 chunks → 100*(0+1)/10 = 10%."""
+    client, conn = empty_app
+    doc_id = _insert(conn, title="open-zero", status="ready", created_at=T0)
+    _set_position(conn, doc_id, current=0, total=10)
+    body = client.get("/library").text
+    assert "10%" in body
+
+
+def test_library_progress_at_last_chunk_is_one_hundred_percent(
+    empty_app: tuple[TestClient, sqlite3.Connection],
+) -> None:
+    client, conn = empty_app
+    doc_id = _insert(conn, title="finished", status="ready", created_at=T0)
+    _set_position(conn, doc_id, current=9, total=10)
+    body = client.get("/library").text
+    assert "100%" in body
+
+
+def test_library_progress_clamps_to_one_hundred_when_position_overflows(
+    empty_app: tuple[TestClient, sqlite3.Connection],
+) -> None:
+    """Defensive clamp: if a future event-replay drift overshoots
+    total_chunks, the displayed percent should still cap at 100%."""
+    client, conn = empty_app
+    doc_id = _insert(conn, title="overshoot", status="ready", created_at=T0)
+    _set_position(conn, doc_id, current=15, total=10)
+    body = client.get("/library").text
+    assert "100%" in body
+    assert "160%" not in body
+
+
+def test_library_progress_for_failed_doc_with_no_total_chunks_is_zero(
+    empty_app: tuple[TestClient, sqlite3.Connection],
+) -> None:
+    """status='failed' or 'processing' docs may have total_chunks=NULL.
+    Progress should render as 0% rather than crashing the row."""
+    client, conn = empty_app
+    _insert(conn, title="failed-doc", status="failed", created_at=T0)
+    body = client.get("/library").text
+    assert "0%" in body
+
+
+def test_progress_percent_pure_function_clamps_and_rounds() -> None:
+    """Direct unit test of the pure formula — keeps rounding/clamping
+    behaviour isolated from the SQL layer."""
+    from parsem.store.documents import progress_percent
+
+    assert progress_percent(None, None) == 0
+    assert progress_percent(10, None) == 0
+    assert progress_percent(None, 0) == 0
+    assert progress_percent(0, 0) == 0
+    assert progress_percent(10, 0) == 10
+    assert progress_percent(10, 4) == 50
+    assert progress_percent(10, 9) == 100
+    assert progress_percent(10, 100) == 100
+    assert progress_percent(3, 0) == 33  # round(33.33...) == 33
+    assert progress_percent(3, 1) == 67  # round(66.66...) == 67

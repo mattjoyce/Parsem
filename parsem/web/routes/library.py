@@ -21,8 +21,9 @@ from pydantic import BaseModel
 
 from parsem.store.documents import (
     delete_document,
-    list_documents_for_library,
+    list_library_rows,
     load_document,
+    progress_percent_for_document,
     rename_document,
 )
 from parsem.web.state import empty_reader_state
@@ -39,12 +40,12 @@ router = APIRouter()
 
 @router.get("/library", response_class=HTMLResponse)
 def get_library(request: Request) -> HTMLResponse:
-    docs = list_documents_for_library(request.app.state.db)
+    rows = list_library_rows(request.app.state.db)
     templates = request.app.state.templates
     return templates.TemplateResponse(
         request,
         "library.html",
-        {"docs": docs, "title_max_len": _TITLE_MAX_LEN},
+        {"rows": rows, "title_max_len": _TITLE_MAX_LEN},
     )
 
 
@@ -92,9 +93,14 @@ def post_rename(
     now = datetime.now(UTC)
     rename_document(conn, document_id, title=title, now=now)
     updated = replace(doc, title=title, updated_at=now)
+    progress = progress_percent_for_document(conn, document_id)
     templates = request.app.state.templates
     return templates.TemplateResponse(
         request,
         "_library_row.html",
-        {"doc": updated, "title_max_len": _TITLE_MAX_LEN},
+        {
+            "doc": updated,
+            "progress_percent": progress,
+            "title_max_len": _TITLE_MAX_LEN,
+        },
     )

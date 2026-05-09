@@ -218,37 +218,87 @@ def load_document(conn: sqlite3.Connection, document_id: int) -> Document | None
     )
 
 
-def list_documents_for_library(conn: sqlite3.Connection) -> list[Document]:
-    """All documents ordered by last-opened DESC (reading_state.updated_at),
-    falling back to created_at when a document has never been opened, with
-    a stable secondary sort by title. Spec §9.1, bead Parsem-3z8.
+@dataclass(frozen=True)
+class LibraryRow:
+    """A document plus the small bits of derived display state the
+    library row needs. Bead Parsem-5oi adds `progress_percent`; future
+    beads may add the heatmap strip here too (Parsem-8p5)."""
 
-    The LEFT JOIN avoids dropping never-opened documents from the listing.
-    Sorting in SQL keeps the route handler dumb — it just renders.
+    document: Document
+    progress_percent: int
+
+
+def progress_percent(total_chunks: int | None, current_position: int | None) -> int:
+    """Library-row progress percentage. Bead Parsem-5oi, spec §9.1.
+
+    Formula: 100 * (current_position + 1) / total_chunks, rounded and
+    clamped to [0, 100]. Returns 0 when the document has never been
+    opened (current_position is None) or when total_chunks is unknown
+    (still processing or failed)."""
+    if not total_chunks or current_position is None:
+        return 0
+    raw = round(100 * (current_position + 1) / total_chunks)
+    return max(0, min(100, raw))
+
+
+def _document_from_row(row: sqlite3.Row) -> Document:
+    return Document(
+        id=row["id"],
+        title=row["title"],
+        source_type=row["source_type"],
+        original_path=row["original_path"],
+        status=row["status"],
+        failure_reason=row["failure_reason"],
+        total_chunks=row["total_chunks"],
+        preference_overrides_json=row["preference_overrides_json"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
+
+def list_library_rows(conn: sqlite3.Connection) -> list[LibraryRow]:
+    """All documents with progress percent, ordered by last-opened DESC
+    (reading_state.updated_at), falling back to created_at for never-
+    opened docs, with a stable secondary sort by title. Spec §9.1;
+    beads Parsem-3z8 + Parsem-5oi.
+
+    Single LEFT JOIN against reading_state covers ordering AND progress
+    computation in one round trip.
     """
     rows = conn.execute(
         "SELECT d.id, d.title, d.source_type, d.original_path, d.status,"
         " d.failure_reason, d.total_chunks, d.preference_overrides_json,"
-        " d.created_at, d.updated_at"
+        " d.created_at, d.updated_at, rs.current_position"
         " FROM documents d"
         " LEFT JOIN reading_state rs ON rs.document_id = d.id"
         " ORDER BY COALESCE(rs.updated_at, d.created_at) DESC, d.title ASC"
     ).fetchall()
     return [
-        Document(
-            id=row["id"],
-            title=row["title"],
-            source_type=row["source_type"],
-            original_path=row["original_path"],
-            status=row["status"],
-            failure_reason=row["failure_reason"],
-            total_chunks=row["total_chunks"],
-            preference_overrides_json=row["preference_overrides_json"],
-            created_at=datetime.fromisoformat(row["created_at"]),
-            updated_at=datetime.fromisoformat(row["updated_at"]),
+        LibraryRow(
+            document=_document_from_row(row),
+            progress_percent=progress_percent(
+                row["total_chunks"], row["current_position"]
+            ),
         )
         for row in rows
     ]
+
+
+def progress_percent_for_document(
+    conn: sqlite3.Connection, document_id: int
+) -> int:
+    """Single-doc progress lookup. Used by the rename route, which needs
+    to render one row partial without a full library scan."""
+    row = conn.execute(
+        "SELECT d.total_chunks, rs.current_position"
+        " FROM documents d"
+        " LEFT JOIN reading_state rs ON rs.document_id = d.id"
+        " WHERE d.id = ?",
+        (document_id,),
+    ).fetchone()
+    if row is None:
+        return 0
+    return progress_percent(row["total_chunks"], row["current_position"])
 
 
 def rename_document(

@@ -11,18 +11,21 @@
     <h1>Library</h1>
     <a class="library-upload-link" href="/upload">Upload</a>
   </header>
-  {% if docs %}
+  {% if rows %}
   <table class="library">
     <thead>
       <tr>
         <th class="library-col-title">Title</th>
         <th class="library-col-status">Status</th>
+        <th class="library-col-progress">Progress</th>
         <th class="library-col-actions"></th>
       </tr>
     </thead>
     <tbody>
-      {% for doc in docs %}
-      {% include "_library_row.html" %}
+      {% for row in rows %}
+        {% set doc = row.document %}
+        {% set progress_percent = row.progress_percent %}
+        {% include "_library_row.html" %}
       {% endfor %}
     </tbody>
   </table>

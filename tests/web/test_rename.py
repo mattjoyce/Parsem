@@ -67,6 +67,8 @@ def test_rename_returns_partial_tr_fragment(
     assert "<tr" in body
     assert f'id="library-row-{doc_id}"' in body
     assert "renamed" in body
+    # Progress column must render — the partial expects progress_percent.
+    assert "library-col-progress" in body
     # Sanity: this is a fragment, not a full HTML doc.
     assert "<html" not in body.lower()
 

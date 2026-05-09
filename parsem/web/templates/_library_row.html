@@ -7,6 +7,7 @@
     <span class="library-failure-reason">— {{ doc.failure_reason }}</span>
     {% endif %}
   </td>
+  <td class="library-col-progress">{{ progress_percent }}%</td>
   <td class="library-col-actions">
     <button type="button" class="library-rename" data-doc-id="{{ doc.id }}"
             data-current-title="{{ doc.title }}"
