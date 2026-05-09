@@ -5,8 +5,9 @@
   <title>Parsem — Reader</title>
   <link rel="stylesheet" href="/static/reader.css">
 </head>
-<body>
+<body data-document-id="{{ document_id }}">
 {% include "_reader_main.html" %}
 <script src="/static/reader.js" defer></script>
+<script src="/static/reader_lifecycle.js" defer></script>
 </body>
 </html>

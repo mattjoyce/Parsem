@@ -9,10 +9,11 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from parsem.domain.economy import cycle_pin, try_reveal
+from parsem.store.documents import load_document
 from parsem.web.state import ReaderState, build_reader_state_for_document
 from parsem.web.view import build_reader_context
 
@@ -69,7 +70,28 @@ def get_document_reader(document_id: int, request: Request) -> HTMLResponse:
             raise HTTPException(status_code=404, detail="Document not found")
         request.app.state.reader = new_state
         state = new_state
+    state.event_log.open_document(
+        document_id=document_id, created_at=state.clock()
+    )
     return _render_full(request, state)
+
+
+@router.post("/documents/{document_id}/close")
+def post_document_close(document_id: int, request: Request) -> Response:
+    """Best-effort close_document log triggered by the client's
+    pagehide/beforeunload sendBeacon. Spec §18.1; bead Parsem-8wj.
+
+    Returns 204 unconditionally — the browser discards the response on
+    sendBeacon, and a stale beacon for a deleted doc must not surface
+    as an error. We swallow the missing-doc case rather than 404 it."""
+    conn = request.app.state.db
+    if load_document(conn, document_id) is None:
+        return Response(status_code=204)
+    state = _state(request)
+    state.event_log.close_document(
+        document_id=document_id, created_at=state.clock()
+    )
+    return Response(status_code=204)
 
 
 @router.post("/pin", response_class=HTMLResponse)

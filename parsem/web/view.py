@@ -147,6 +147,7 @@ def build_reader_context(state: ReaderState) -> dict[str, Any]:
     progress_current = state.current_position + 1
     progress_total = len(state.chunks)
     return {
+        "document_id": state.document_id,
         "visible_chunks": visible,
         "current_position": state.current_position,
         "section_heading": current_section_heading(
