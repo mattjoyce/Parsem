@@ -1,0 +1,14 @@
+/* Pin-dot visibility refinement for .chunk--current. Spec §9.5; bead Parsem-bwz.
+ *
+ * .chunk--current uses `margin-left: -0.5em; border-left: 2px; padding-left: 0.5em`
+ * to render the 2px current-chunk bar without shifting body text.
+ * That shift moves the absolutely-positioned .pin-dot ~9px further left
+ * than the settled-chunk dots, putting it outside .reader-scroll's
+ * `overflow-x: hidden` clip rectangle — the dot is set in DB but never
+ * paints, so pressing P feels like a no-op until the chunk later settles.
+ *
+ * Compensate by adding the same 0.5em - 2px offset back to the dot's
+ * `left`, so it lands at the same x-coordinate as settled-chunk dots
+ * (column.left - 16px), in the visible gutter.
+ */
+.chunk--current .pin-dot { left: calc(-16px + 0.5em - 2px); }

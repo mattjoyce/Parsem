@@ -88,3 +88,65 @@ def test_reader_js_initial_settle_via_request_animation_frame(reader_js_source: 
 
 def test_reader_js_settles_on_window_resize(reader_js_source: str) -> None:
     assert "resize" in reader_js_source
+
+
+# Parsem-bwz — pin navigation moved off the server to pure client-side scroll.
+
+
+def test_reader_pins_js_is_served(client: TestClient) -> None:
+    response = client.get("/static/reader_pins.js")
+    assert response.status_code == 200
+    assert "javascript" in response.headers["content-type"]
+
+
+def test_reader_pins_css_is_served(client: TestClient) -> None:
+    response = client.get("/static/reader_pins.css")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/css")
+
+
+def test_reader_pins_js_handles_all_four_pin_keys(client: TestClient) -> None:
+    src = client.get("/static/reader_pins.js").text
+    for key in ("[", "]", "{", "}"):
+        assert f'"{key}"' in src, f"reader_pins.js missing key literal {key!r}"
+
+
+def test_reader_pins_js_uses_capture_phase(client: TestClient) -> None:
+    """Capture-phase listener guarantees pin keys are handled before
+    reader.js's bubble-phase listener fires (which would POST to the
+    obsolete jump-to-pin route)."""
+    src = client.get("/static/reader_pins.js").text
+    assert "stopImmediatePropagation" in src
+    # The third arg `true` to addEventListener (or `{ capture: true }`) flips
+    # the listener to capture phase. Either form satisfies the contract.
+    assert "true, // capture" in src or "{ capture: true }" in src
+
+
+def test_reader_pins_js_does_not_post_to_server(client: TestClient) -> None:
+    """The whole point of Parsem-bwz: jumps are pure scroll, no server
+    round-trip. fetch / POST should not appear anywhere in this module."""
+    src = client.get("/static/reader_pins.js").text
+    assert "fetch(" not in src
+    assert "/jump-to-pin" not in src
+    assert "/return" not in src
+
+
+def test_reader_pins_js_filters_by_color_for_curly_keys(client: TestClient) -> None:
+    """{ and } take an extra `sameColorOnly` flag so the filter logic
+    is testable from this contract grep."""
+    src = client.get("/static/reader_pins.js").text
+    assert "data-pin-color" in src
+    assert "sameColorOnly" in src
+
+
+def test_reader_html_links_pin_assets(client: TestClient, state) -> None:  # type: ignore[no-untyped-def]
+    body = client.get(f"/documents/{state.document_id}/reader").text
+    assert "/static/reader_pins.css" in body
+    assert "/static/reader_pins.js" in body
+
+
+def test_reader_pins_css_targets_current_chunk_dot(client: TestClient) -> None:
+    src = client.get("/static/reader_pins.css").text
+    assert ".chunk--current" in src
+    assert ".pin-dot" in src
+    assert "left:" in src
