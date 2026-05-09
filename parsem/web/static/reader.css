@@ -306,9 +306,12 @@ body {
   right: calc(-1 * var(--gutter-right) + 4px);
   bottom: 0;
   display: flex;
-  flex-direction: column;
+  /* column-reverse so the dot for rating 1 sits at the BOTTOM, with
+   * 5 at the top — UAT preference, claude-axx.3. The DOM source
+   * order stays 1..5 ascending; only the visual flips. */
+  flex-direction: column-reverse;
   align-items: center;
-  gap: 0.05em;
+  gap: 0.18em;
   opacity: 0.4;
   font-size: 0.8em;
   line-height: 1.1;
@@ -316,11 +319,13 @@ body {
   user-select: none;
 }
 .rating-prompt:hover { opacity: 0.9; }
-/* Rating dots — five hollow circles in vertical stack. The dot at
- * the current chunk's rating is filled; clicking a hollow one sets
- * the rating, clicking the filled one clears it (claude-axx.3 UAT
- * dot-toggle UX). Keyboard 1–5 keeps "set only" semantics — the
- * toggle-to-clear lives on the click surface (§7.4 + §8a.1). */
+/* Rating dots — five circles in vertical stack (1 at the bottom).
+ * All dots up to AND INCLUDING the chunk's rating render filled;
+ * the topmost-filled dot (the "mark") carries .rating-dot--active
+ * so JS can detect a toggle-off click. Click any dot to set rating
+ * to that level; click the active dot to clear (claude-axx.3 UAT
+ * dot-toggle UX). Keyboard N matches the click semantics: N pressed
+ * with rating==N clears, otherwise sets rating to N. */
 .rating-dot {
   background: transparent;
   border: 1px solid currentColor;
@@ -333,16 +338,13 @@ body {
   color: inherit;
   transition: background 120ms ease, transform 100ms ease;
 }
-.rating-dot:hover { background: rgba(0, 0, 0, 0.15); }
-.rating-dot--active {
-  background: currentColor;
-  /* Active dot reads as a filled marker; the column has a global
-   * 0.4 opacity at rest, so the "filled" looks subdued. Hovering
-   * the prompt brings it to 0.9 so the active dot becomes vivid. */
-}
+.rating-dot:hover { background: rgba(0, 0, 0, 0.25); }
+.rating-dot--filled { background: currentColor; }
 .rating-dot--active:hover {
-  /* Hover on the active dot signals "click again to clear." Faded
-   * to a hairline ring so the toggle-off affordance is visible. */
+  /* Hover on the active dot signals "click again to clear." Hollow-
+   * out the fill so the toggle-off affordance is visible — different
+   * from hovering a non-active filled dot, which signals "demote
+   * rating to this dot." */
   background: transparent;
 }
 

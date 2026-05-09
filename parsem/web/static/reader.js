@@ -21,11 +21,6 @@
   const ACTIONS = {
     " ":         { method: "POST", url: "/reveal" },
     "Backspace": { method: "POST", url: "/conceal" },
-    "1":         { method: "POST", url: "/rate", body: { rating: 1 } },
-    "2":         { method: "POST", url: "/rate", body: { rating: 2 } },
-    "3":         { method: "POST", url: "/rate", body: { rating: 3 } },
-    "4":         { method: "POST", url: "/rate", body: { rating: 4 } },
-    "5":         { method: "POST", url: "/rate", body: { rating: 5 } },
     "p":         { method: "POST", url: "/pin" },
     "P":         { method: "POST", url: "/pin" },
     "]":         { method: "POST", url: "/jump-to-pin", body: { direction: "next", color_mode: "any" } },
@@ -34,6 +29,23 @@
     "{":         { method: "POST", url: "/jump-to-pin", body: { direction: "prev", color_mode: "same_as_current" } },
     "'":         { method: "POST", url: "/return" },
   };
+
+  // 1..5 keys are NOT in ACTIONS because they need toggle-aware
+  // routing: keypress N with rating==N clears, otherwise sets to N.
+  // Mirrors the click semantics on rating dots (§7.4 / §8a.1 /
+  // claude-axx.3 UAT). The active dot in the live DOM is the source
+  // of truth for "current rating" — server-rendered, never stale.
+  function ratingActionForKey(key) {
+    const rating = parseInt(key, 10);
+    if (Number.isNaN(rating) || rating < 1 || rating > 5) return null;
+    const activeDot = document.querySelector(
+      `.rating-dot--active[data-rating="${rating}"]`,
+    );
+    if (activeDot) {
+      return { method: "POST", url: "/unrate" };
+    }
+    return { method: "POST", url: "/rate", body: { rating } };
+  }
 
   function scrollContainer() {
     return document.querySelector(".reader-scroll");
@@ -112,6 +124,26 @@
     tempContainer.innerHTML = html;
     const newMain = tempContainer.firstElementChild;
     if (!newMain) return;
+
+    // Sync #reader-main's data-* attrs from the response onto the
+    // live element. We DON'T replace #reader-main itself (that would
+    // detach the keyboard listener bound to document and lose the
+    // .reader-scroll element's scrollTop). But its data-current-
+    // position and data-high-water-position are read by Space-
+    // resume routing — without this sync, the values stay frozen at
+    // page-load and the Space-resume / advance routing breaks the
+    // moment the server moves the cursor (claude-axx.3 UAT — Space
+    // appeared "inop" because spaceActionForState kept seeing the
+    // initial stale current < high_water and re-issued
+    // /set-current-position instead of falling through to /reveal).
+    const oldMain = document.getElementById("reader-main");
+    if (oldMain && newMain.id === "reader-main") {
+      for (const name of newMain.getAttributeNames()) {
+        if (name.startsWith("data-")) {
+          oldMain.setAttribute(name, newMain.getAttribute(name) ?? "");
+        }
+      }
+    }
 
     const oldTopBar = document.querySelector(".top-bar");
     const newTopBar = newMain.querySelector(".top-bar");
@@ -260,6 +292,15 @@
     if (event.key === " ") {
       event.preventDefault();
       dispatch(spaceActionForState());
+      return;
+    }
+
+    if (event.key >= "1" && event.key <= "5") {
+      const action = ratingActionForKey(event.key);
+      if (action) {
+        event.preventDefault();
+        dispatch(action);
+      }
       return;
     }
 

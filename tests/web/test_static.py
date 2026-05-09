@@ -24,17 +24,16 @@ def test_static_js_is_served(client: TestClient) -> None:
 EXPECTED_BINDINGS: dict[str, str] = {
     " ": "/reveal",
     "Backspace": "/conceal",
-    "1": "/rate",
-    "2": "/rate",
-    "3": "/rate",
-    "4": "/rate",
-    "5": "/rate",
     "p": "/pin",
     "P": "/pin",
     "]": "/jump-to-pin",
     "[": "/jump-to-pin",
     "'": "/return",
 }
+# 1-5 are NOT in EXPECTED_BINDINGS because they no longer route through
+# the static ACTIONS dict — they go through ratingActionForKey, which
+# inspects the live DOM to decide /rate vs /unrate (toggle UX). Tested
+# separately by test_reader_js_handles_rating_key_toggle below.
 
 
 def test_reader_js_binds_every_contract_key(reader_js_source: str) -> None:
@@ -89,6 +88,15 @@ def test_reader_js_binds_chunk_body_click(reader_js_source: str) -> None:
     swapped in later."""
     assert "/set-current-position" in reader_js_source
     assert ".chunk" in reader_js_source
+
+
+def test_reader_js_handles_rating_key_toggle(reader_js_source: str) -> None:
+    """claude-axx.3 UAT — keyboard 1-5 is toggle-aware: pressing N
+    when the chunk's rating is already N clears (POST /unrate),
+    otherwise sets to N (POST /rate). The handler reads the active
+    dot from the live DOM."""
+    assert "ratingActionForKey" in reader_js_source
+    assert "rating-dot--active" in reader_js_source
 
 
 def test_reader_js_binds_rating_dot_click(reader_js_source: str) -> None:
