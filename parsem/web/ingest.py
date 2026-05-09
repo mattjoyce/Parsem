@@ -7,7 +7,7 @@ document `failed` with a human-readable reason and returns False.
 
 The full pipeline (claude-axx):
   text -> DocumentRevision -> ParsedBlock[] -> AtomicPiece[]
-       -> PreprocessedPiece[] -> ChunkPlan -> ChunkRecord[] -> SectionRecord[]
+       -> PreprocessedPiece[] -> ChunkPlan -> Chunk[] -> Section[]
        -> persist (revision, pieces, run, chunks+chunk_pieces, sections)
 """
 

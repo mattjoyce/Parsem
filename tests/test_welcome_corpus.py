@@ -11,8 +11,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from parsem.domain.chunking import ChunkingConfig, chunk
-from parsem.parse.markdown_parse import parse
+from tests.conftest import chunk_via_substrate
 
 WELCOME = Path(__file__).resolve().parent.parent / "data" / "welcome.md"
 
@@ -51,8 +50,7 @@ def test_welcome_chunks_to_target_count_at_default_budget() -> None:
     """At the new 30s default + list_handling='block' (Parsem-ew8),
     welcome.md packs into ~12-20 paragraph-sized chunks across its 5
     H2 sections, with the bullet list collapsing to one chunk."""
-    blocks = parse(_text())
-    output = chunk(blocks, ChunkingConfig())
-    assert 10 <= len(output.chunks) <= 20, (
-        f"expected 10..20 chunks at 30s budget, got {len(output.chunks)}"
+    chunks, _sections = chunk_via_substrate(_text())
+    assert 10 <= len(chunks) <= 20, (
+        f"expected 10..20 chunks at 30s budget, got {len(chunks)}"
     )

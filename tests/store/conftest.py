@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 
-from parsem.domain.chunking import Chunk, Section
+from parsem.domain.materialize import Chunk, Section
 from parsem.store.db import connect, migrate
 from parsem.store.documents import insert_chunks_and_sections, insert_document
 from tests.conftest import T0

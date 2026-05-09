@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from parsem.domain.bucket import BucketConfig
-from parsem.domain.chunking import Chunk, Section
+from parsem.domain.materialize import Chunk, Section
 from parsem.store.documents import (
     load_chunks_for_document,
     load_document,

@@ -10,13 +10,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from parsem.cli import RESUME_WARM_CHUNKS_DEFAULT
-from parsem.domain.chunking import ChunkingConfig, chunk
-from parsem.parse.markdown_parse import parse
 from parsem.store.db import connect, migrate
 from parsem.store.documents import insert_chunks_and_sections, insert_document
 from parsem.web.app import create_app
 from parsem.web.state import ReaderState, build_reader_state_for_document
-from tests.conftest import T0
+from tests.conftest import T0, chunk_via_substrate
 
 WELCOME = Path(__file__).resolve().parents[2] / "data" / "welcome.md"
 
@@ -27,21 +25,20 @@ def db() -> sqlite3.Connection:
     document_id 1 is the welcome doc."""
     conn = connect(":memory:")
     migrate(conn)
-    blocks = parse(WELCOME.read_text(encoding="utf-8"))
-    output = chunk(blocks, ChunkingConfig())
+    chunks, sections = chunk_via_substrate(WELCOME.read_text(encoding="utf-8"))
     document_id = insert_document(
         conn,
         title="welcome",
         original_path="data/welcome.md",
         status="ready",
-        total_chunks=len(output.chunks),
+        total_chunks=len(chunks),
         now=T0,
     )
     insert_chunks_and_sections(
         conn,
         document_id=document_id,
-        chunks=output.chunks,
-        sections=output.sections,
+        chunks=chunks,
+        sections=sections,
         now=T0,
     )
     return conn

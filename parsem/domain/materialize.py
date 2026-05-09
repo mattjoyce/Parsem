@@ -5,16 +5,17 @@ contiguous chunks: the chunk's text is the revision's source slice
 between the first and last piece's offsets. Non-contiguous (joined)
 chunks are a deferred concern.
 
-Field names on `ChunkRecord` mirror the legacy `parsem.domain.chunking.Chunk`
-so the reader templates dispatch correctly without churn. New fields
-(`text_hash`, `start_line`, `end_line`, `start_column`, `end_column`,
-`piece_ordinals`) are additive.
+Chunk and Section are the canonical shapes for the rest of the
+codebase (web/state, web/view, store/documents). The legacy
+`parsem.domain.chunking` module was deleted in claude-axx.1 — its
+fields lived on through this superset: text_hash, line/column
+spans, and piece_ordinals are the substrate-introduced extras.
 """
 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from parsem.domain.atomic import AtomicPiece, PieceKind
 from parsem.domain.strategies import ChunkingRuleset, ChunkPlan
@@ -23,26 +24,37 @@ from parsem.store.revisions import DocumentRevision
 
 
 @dataclass(frozen=True)
-class ChunkRecord:
-    """Phase 1 chunk: a contiguous source span produced from a plan."""
+class Chunk:
+    """The unit of reveal in the reading economy. A contiguous source
+    span produced by the substrate's materialize_chunks pipeline.
+
+    The first seven fields are the legacy chunk surface — every reader
+    template, projection, and persistence path reads them. The next
+    five (text_hash, line/column spans) and piece_ordinals are
+    substrate-introduced extras with neutral defaults so load-from-DB
+    paths that only need the legacy surface (e.g.,
+    `load_chunks_for_document` for the reader view) can construct a
+    Chunk without re-querying chunk_pieces. Re-anchor / re-chunk paths
+    use dedicated queries (`get_chunk_piece_hashes_for_document`)
+    rather than reading piece_ordinals off this dataclass."""
 
     position: int
     source_offset_start: int
     source_offset_end: int
     text: str
-    text_hash: str
     lead_token_type: BlockType
     lead_heading_level: int | None
     estimated_read_seconds: float
-    start_line: int
-    end_line: int
-    start_column: int
-    end_column: int
-    piece_ordinals: list[int]
+    text_hash: str = ""
+    start_line: int = 0
+    end_line: int = 0
+    start_column: int = 0
+    end_column: int = 0
+    piece_ordinals: list[int] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
-class SectionRecord:
+class Section:
     """Heading-bounded grouping of chunks. Same shape as legacy Section."""
 
     heading_chunk_position: int | None
@@ -69,8 +81,8 @@ def materialize_chunks(
     revision: DocumentRevision,
     pieces: list[AtomicPiece],
     rules: ChunkingRuleset,
-) -> list[ChunkRecord]:
-    """Walk the plan, emit one `ChunkRecord` per planned chunk.
+) -> list[Chunk]:
+    """Walk the plan, emit one `Chunk` per planned chunk.
 
     Each chunk's text is sliced directly from `revision.full_text` —
     never reconstructed from piece snapshots. That keeps source fidelity
@@ -82,7 +94,7 @@ def materialize_chunks(
             "non-contiguous materialization is a later phase"
         )
 
-    chunks: list[ChunkRecord] = []
+    chunks: list[Chunk] = []
     for planned in plan.planned_chunks:
         ordered = sorted(
             (pieces[ord_] for ord_ in planned.piece_ordinals),
@@ -97,7 +109,7 @@ def materialize_chunks(
         end_anchor = end - 1 if end > start else start
         start_line, start_column = revision.line_index.line_column(start)
         end_line, end_column = revision.line_index.line_column(end_anchor)
-        chunks.append(ChunkRecord(
+        chunks.append(Chunk(
             position=len(chunks),
             source_offset_start=start,
             source_offset_end=end,
@@ -115,7 +127,7 @@ def materialize_chunks(
     return chunks
 
 
-def derive_sections(chunks: list[ChunkRecord]) -> list[SectionRecord]:
+def derive_sections(chunks: list[Chunk]) -> list[Section]:
     """Group chunks into heading-bounded sections.
 
     A heading chunk starts a new section. Chunks before the first heading
@@ -125,7 +137,7 @@ def derive_sections(chunks: list[ChunkRecord]) -> list[SectionRecord]:
     if not chunks:
         return []
 
-    sections: list[SectionRecord] = []
+    sections: list[Section] = []
     section_start = 0
     section_heading_position: int | None = None
     section_heading_level: int | None = None
@@ -134,7 +146,7 @@ def derive_sections(chunks: list[ChunkRecord]) -> list[SectionRecord]:
         if chunk.lead_token_type != "heading":
             continue
         if chunk.position > section_start or section_heading_position is not None:
-            sections.append(SectionRecord(
+            sections.append(Section(
                 heading_chunk_position=section_heading_position,
                 heading_level=section_heading_level,
                 start_chunk_position=section_start,
@@ -144,7 +156,7 @@ def derive_sections(chunks: list[ChunkRecord]) -> list[SectionRecord]:
         section_heading_position = chunk.position
         section_heading_level = chunk.lead_heading_level
 
-    sections.append(SectionRecord(
+    sections.append(Section(
         heading_chunk_position=section_heading_position,
         heading_level=section_heading_level,
         start_chunk_position=section_start,

@@ -7,8 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from parsem.domain.chunking import Chunk, ChunkingConfig, Section, chunk
-from parsem.parse.markdown_parse import parse
+from parsem.domain.materialize import Chunk, Section
 from parsem.store.db import connect, migrate
 from parsem.store.documents import (
     Document,
@@ -18,7 +17,7 @@ from parsem.store.documents import (
     load_document,
     load_sections_for_document,
 )
-from tests.conftest import T0
+from tests.conftest import T0, chunk_via_substrate
 
 WELCOME = Path(__file__).resolve().parents[2] / "data" / "welcome.md"
 
@@ -43,8 +42,28 @@ def doc_id(db: sqlite3.Connection) -> int:
 
 
 def _welcome_chunks_and_sections() -> tuple[list[Chunk], list[Section]]:
-    output = chunk(parse(WELCOME.read_text(encoding="utf-8")), ChunkingConfig())
-    return output.chunks, output.sections
+    return chunk_via_substrate(WELCOME.read_text(encoding="utf-8"))
+
+
+def _strip_substrate_extras(c: Chunk) -> Chunk:
+    """Reset the substrate-only fields (text_hash, line/column spans,
+    piece_ordinals) to their dataclass defaults. The legacy
+    `insert_chunks_and_sections` persistence path doesn't carry those
+    fields through; comparing on equality after a round-trip would
+    fail spuriously without this strip. Modern persistence
+    (`insert_chunking_artifacts`) does carry them; tests of that path
+    assert on the substrate fields directly."""
+    from dataclasses import replace
+
+    return replace(
+        c,
+        text_hash="",
+        start_line=0,
+        end_line=0,
+        start_column=0,
+        end_column=0,
+        piece_ordinals=[],
+    )
 
 
 def test_insert_document_returns_new_id(db: sqlite3.Connection) -> None:
@@ -100,7 +119,7 @@ def test_insert_chunks_round_trip_via_load_chunks(
         db, document_id=doc_id, chunks=chunks, sections=sections, now=T0
     )
     loaded = load_chunks_for_document(db, doc_id)
-    assert loaded == chunks
+    assert loaded == [_strip_substrate_extras(c) for c in chunks]
 
 
 def test_insert_sections_resolve_heading_chunk_id(
@@ -206,8 +225,8 @@ def test_load_chunks_round_trips_chunk_dataclass(
         db, document_id=doc_id, chunks=chunks, sections=sections, now=T0
     )
     loaded = load_chunks_for_document(db, doc_id)
-    assert loaded[0] == chunks[0]
-    assert loaded[-1] == chunks[-1]
+    assert loaded[0] == _strip_substrate_extras(chunks[0])
+    assert loaded[-1] == _strip_substrate_extras(chunks[-1])
 
 
 def test_load_sections_orders_by_start_position(
@@ -250,7 +269,9 @@ def test_welcome_full_round_trip(db: sqlite3.Connection, doc_id: int) -> None:
     insert_chunks_and_sections(
         db, document_id=doc_id, chunks=chunks, sections=sections, now=T0
     )
-    assert load_chunks_for_document(db, doc_id) == chunks
+    assert load_chunks_for_document(db, doc_id) == [
+        _strip_substrate_extras(c) for c in chunks
+    ]
     assert load_sections_for_document(db, doc_id) == sections
 
 

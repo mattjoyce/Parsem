@@ -14,7 +14,7 @@ from markdown_it import MarkdownIt
 from markupsafe import Markup
 
 from parsem.domain.bucket import tokens_now
-from parsem.domain.chunking import Chunk
+from parsem.domain.materialize import Chunk
 from parsem.web.state import ReaderState
 
 _RENDERER = MarkdownIt("commonmark", {"html": False})

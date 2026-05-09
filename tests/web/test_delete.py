@@ -16,8 +16,6 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from parsem.domain.chunking import ChunkingConfig, chunk
-from parsem.parse.markdown_parse import parse
 from parsem.store.db import connect, migrate
 from parsem.store.documents import (
     insert_chunks_and_sections,
@@ -26,6 +24,7 @@ from parsem.store.documents import (
 )
 from parsem.web.app import create_app
 from parsem.web.state import empty_reader_state
+from tests.conftest import chunk_via_substrate
 
 T0 = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
@@ -34,20 +33,20 @@ def _seed_doc(conn: sqlite3.Connection, *, title: str = "doc") -> int:
     """Parse a tiny markdown blob and insert document + chunks + sections.
     Returns the new document_id."""
     md = "# Heading\n\nfirst paragraph.\n\nsecond paragraph.\n"
-    output = chunk(parse(md), ChunkingConfig())
+    chunks, sections = chunk_via_substrate(md)
     document_id = insert_document(
         conn,
         title=title,
         original_path=f"data/originals/{title}.md",
         status="ready",
-        total_chunks=len(output.chunks),
+        total_chunks=len(chunks),
         now=T0,
     )
     insert_chunks_and_sections(
         conn,
         document_id=document_id,
-        chunks=output.chunks,
-        sections=output.sections,
+        chunks=chunks,
+        sections=sections,
         now=T0,
     )
     return document_id

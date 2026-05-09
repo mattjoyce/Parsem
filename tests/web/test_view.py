@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from parsem.domain.chunking import Chunk, Section
+from parsem.domain.materialize import Chunk, Section
 from parsem.web.view import (
     _dot_classes,
     current_section_heading,

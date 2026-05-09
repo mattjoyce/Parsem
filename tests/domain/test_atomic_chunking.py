@@ -2,7 +2,7 @@
 
 Spec: AtomicChunkingPhase1.md §Test Strategy. Every test runs the full
 pipeline (ParsedBlock → AtomicPiece → PreprocessedPiece → ChunkPlan →
-ChunkRecord) and asserts on substrate invariants — not just the visible
+Chunk) and asserts on substrate invariants — not just the visible
 chunk shape.
 """
 
@@ -21,7 +21,7 @@ from parsem.domain.atomic import (
     validate_pieces,
 )
 from parsem.domain.materialize import (
-    ChunkRecord,
+    Chunk,
     derive_sections,
     materialize_chunks,
 )
@@ -44,7 +44,7 @@ def _run(text: str, rules: ChunkingRuleset | None = None) -> tuple[
     list[AtomicPiece],
     list[PreprocessedPiece],
     ChunkPlan,
-    list[ChunkRecord],
+    list[Chunk],
     DocumentRevision,
 ]:
     rules = rules or ChunkingRuleset()

@@ -18,8 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from parsem.domain.atomic import AtomicPiece
-from parsem.domain.chunking import Chunk, Section
-from parsem.domain.materialize import ChunkRecord, SectionRecord
+from parsem.domain.materialize import Chunk, Section
 from parsem.store.atomic_pieces import insert_atomic_pieces
 from parsem.store.chunking_runs import ChunkingRun, insert_chunking_run
 
@@ -410,8 +409,8 @@ def insert_chunking_artifacts(
     strategy_version: str,
     rules_hash: str,
     pieces: list[AtomicPiece],
-    chunk_records: list[ChunkRecord],
-    section_records: list[SectionRecord],
+    chunk_records: list[Chunk],
+    section_records: list[Section],
     now: datetime,
 ) -> ChunkingRun:
     """Persist the full substrate output for a single chunking pass.
@@ -528,7 +527,7 @@ def insert_chunking_artifacts(
 
 def load_chunk_records_for_document(
     conn: sqlite3.Connection, document_id: int
-) -> list[ChunkRecord]:
+) -> list[Chunk]:
     """Latest-run chunk records for a document. Returns [] when the
     document has no chunking run yet (still processing or failed)."""
     rows = conn.execute(
@@ -562,7 +561,7 @@ def load_chunk_records_for_document(
     for jr in junction_rows:
         pieces_by_chunk[jr["chunk_id"]].append(jr["piece_ordinal"])
     return [
-        ChunkRecord(
+        Chunk(
             position=row["position"],
             source_offset_start=row["source_offset_start"],
             source_offset_end=row["source_offset_end"],
@@ -583,7 +582,7 @@ def load_chunk_records_for_document(
 
 def load_section_records_for_document(
     conn: sqlite3.Connection, document_id: int
-) -> list[SectionRecord]:
+) -> list[Section]:
     """Latest-run sections for a document."""
     rows = conn.execute(
         "SELECT s.start_chunk_position, s.end_chunk_position, s.heading_level,"
@@ -603,7 +602,7 @@ def load_section_records_for_document(
         (document_id, document_id),
     ).fetchall()
     return [
-        SectionRecord(
+        Section(
             heading_chunk_position=row["heading_chunk_position"],
             heading_level=row["heading_level"],
             start_chunk_position=row["start_chunk_position"],
