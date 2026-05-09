@@ -40,16 +40,21 @@
     return document.querySelector(".chunk--current");
   }
 
-  // True when the current chunk's bottom edge is within ±20px of the 70%
-  // anchor of the scroll viewport. Outside this band, the reader is
-  // "scrolled away" and action keys should snap back instead of acting.
+  // True when the actual scrollTop matches what settleAtCurrent would
+  // set. Outside this band, the reader is "scrolled away" and action
+  // keys should snap back instead of acting (§8.1 return-first).
+  //
+  // We can't anchor on "chunk bottom at 70%" alone: when the document
+  // is short or the current chunk is near the top, the desired scroll
+  // is clamped at 0 and the chunk simply can't reach 70%. The right
+  // canonical check is "scrollTop equals the clamped desired top."
   function isAtCanonical() {
     const sc = scrollContainer();
     const cc = currentChunk();
     if (!sc || !cc) return true;
     const target = ANCHOR_RATIO * sc.clientHeight;
-    const bottomFromTop = cc.offsetTop + cc.offsetHeight - sc.scrollTop;
-    return Math.abs(bottomFromTop - target) <= CANONICAL_TOLERANCE_PX;
+    const desiredTop = Math.max(0, cc.offsetTop + cc.offsetHeight - target);
+    return Math.abs(sc.scrollTop - desiredTop) <= CANONICAL_TOLERANCE_PX;
   }
 
   // Smooth-scroll the reading viewport so the current chunk's bottom edge
@@ -60,8 +65,9 @@
     const cc = currentChunk();
     if (!sc || !cc) return;
     const target = ANCHOR_RATIO * sc.clientHeight;
-    // scrollTop can't go negative; .column has 70vh padding-top so this
-    // clamp normally won't kick in for typical chunk heights.
+    // Clamp at 0 — early in the doc the chunk's natural offset is less
+    // than the 70%-anchor target, so the scroll target collapses to 0
+    // and the chunk just sits at the top below the bar.
     const top = Math.max(0, cc.offsetTop + cc.offsetHeight - target);
     sc.scrollTo({ top, behavior });
   }
