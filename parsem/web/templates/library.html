@@ -22,22 +22,7 @@
     </thead>
     <tbody>
       {% for doc in docs %}
-      <tr>
-        <td class="library-col-title">
-          <a href="/documents/{{ doc.id }}/reader">{{ doc.title }}</a>
-        </td>
-        <td class="library-col-status library-status-{{ doc.status }}">
-          {{ doc.status }}{% if doc.status == "failed" and doc.failure_reason %}
-          <span class="library-failure-reason">— {{ doc.failure_reason }}</span>
-          {% endif %}
-        </td>
-        <td class="library-col-actions">
-          <form method="post" action="/documents/{{ doc.id }}/delete"
-                onsubmit="return confirm('Delete &quot;{{ doc.title }}&quot;? This cannot be undone.');">
-            <button type="submit" class="library-delete">Delete</button>
-          </form>
-        </td>
-      </tr>
+      {% include "_library_row.html" %}
       {% endfor %}
     </tbody>
   </table>
@@ -47,5 +32,6 @@
   </p>
   {% endif %}
 </main>
+<script src="/static/library.js" defer></script>
 </body>
 </html>

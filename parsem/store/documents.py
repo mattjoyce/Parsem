@@ -251,6 +251,23 @@ def list_documents_for_library(conn: sqlite3.Connection) -> list[Document]:
     ]
 
 
+def rename_document(
+    conn: sqlite3.Connection,
+    document_id: int,
+    *,
+    title: str,
+    now: datetime,
+) -> None:
+    """Rename a document. Caller is responsible for trimming and length
+    validation (the route does that so it can return a 422 with a
+    helpful detail). Spec §22; bead Parsem-kwq."""
+    conn.execute(
+        "UPDATE documents SET title=?, updated_at=? WHERE id=?",
+        (title, now.isoformat(), document_id),
+    )
+    conn.commit()
+
+
 def delete_document(conn: sqlite3.Connection, document_id: int) -> bool:
     """Hard-delete a document. Returns True on success, False if no row
     matched the id. Spec §22; bead Parsem-eci.

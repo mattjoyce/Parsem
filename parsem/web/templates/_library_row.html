@@ -1,0 +1,18 @@
+<tr id="library-row-{{ doc.id }}" class="library-row" data-doc-id="{{ doc.id }}">
+  <td class="library-col-title">
+    <a class="library-title-link" href="/documents/{{ doc.id }}/reader">{{ doc.title }}</a>
+  </td>
+  <td class="library-col-status library-status-{{ doc.status }}">
+    {{ doc.status }}{% if doc.status == "failed" and doc.failure_reason %}
+    <span class="library-failure-reason">— {{ doc.failure_reason }}</span>
+    {% endif %}
+  </td>
+  <td class="library-col-actions">
+    <button type="button" class="library-rename" data-doc-id="{{ doc.id }}"
+            data-current-title="{{ doc.title }}">Rename</button>
+    <form method="post" action="/documents/{{ doc.id }}/delete"
+          onsubmit="return confirm('Delete &quot;{{ doc.title }}&quot;? This cannot be undone.');">
+      <button type="submit" class="library-delete">Delete</button>
+    </form>
+  </td>
+</tr>
