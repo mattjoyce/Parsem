@@ -251,6 +251,19 @@ def list_documents_for_library(conn: sqlite3.Connection) -> list[Document]:
     ]
 
 
+def delete_document(conn: sqlite3.Connection, document_id: int) -> bool:
+    """Hard-delete a document. Returns True on success, False if no row
+    matched the id. Spec §22; bead Parsem-eci.
+
+    The schema's ON DELETE CASCADE on sections/chunks/reading_events/
+    reading_state/pins (§21) is what actually wipes the dependents —
+    the route also needs to unlink the original .md file separately.
+    """
+    cur = conn.execute("DELETE FROM documents WHERE id=?", (document_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def load_chunks_for_document(conn: sqlite3.Connection, document_id: int) -> list[Chunk]:
     rows = conn.execute(
         "SELECT position, source_offset_start, source_offset_end, text,"

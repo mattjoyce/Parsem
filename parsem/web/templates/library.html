@@ -17,6 +17,7 @@
       <tr>
         <th class="library-col-title">Title</th>
         <th class="library-col-status">Status</th>
+        <th class="library-col-actions"></th>
       </tr>
     </thead>
     <tbody>
@@ -29,6 +30,12 @@
           {{ doc.status }}{% if doc.status == "failed" and doc.failure_reason %}
           <span class="library-failure-reason">— {{ doc.failure_reason }}</span>
           {% endif %}
+        </td>
+        <td class="library-col-actions">
+          <form method="post" action="/documents/{{ doc.id }}/delete"
+                onsubmit="return confirm('Delete &quot;{{ doc.title }}&quot;? This cannot be undone.');">
+            <button type="submit" class="library-delete">Delete</button>
+          </form>
         </td>
       </tr>
       {% endfor %}
