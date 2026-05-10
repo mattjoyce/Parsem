@@ -104,8 +104,13 @@ class ChunkingStrategy(Protocol):
 def validate_chunk_plan(
     plan: ChunkPlan, pieces: list[PreprocessedPiece]
 ) -> None:
-    """Phase 1 plan invariants. Raises AssertionError on first violation."""
-    known = {p.piece.ordinal for p in pieces}
+    """Phase 1 plan invariants. Raises AssertionError on first violation.
+
+    HR pieces are skipped from chunking (claude-jvs.3 UAT) — they read
+    as blank chunks. They remain in the preprocessed list but must
+    never appear in a chunk; the `revealable` set excludes them and
+    serves as both the "unknown piece" guard and the completeness set."""
+    revealable = {p.piece.ordinal for p in pieces if not p.is_horizontal_rule}
     seen: set[int] = set()
     for i, chunk in enumerate(plan.planned_chunks):
         assert chunk.ordinal == i, (
@@ -113,7 +118,9 @@ def validate_chunk_plan(
         )
         assert chunk.piece_ordinals, f"chunk[{i}] is empty"
         for ord_ in chunk.piece_ordinals:
-            assert ord_ in known, f"chunk[{i}] references unknown piece ord={ord_}"
+            assert ord_ in revealable, (
+                f"chunk[{i}] references unknown-or-skipped piece ord={ord_}"
+            )
             assert ord_ not in seen, f"chunk[{i}] piece ord={ord_} already assigned"
             seen.add(ord_)
         ordered = sorted(chunk.piece_ordinals)
@@ -123,9 +130,8 @@ def validate_chunk_plan(
         assert chunk.lead_piece_ordinal == chunk.piece_ordinals[0], (
             f"chunk[{i}] lead_piece_ordinal must equal first piece"
         )
-    # Every revealable piece must appear in exactly one chunk.
-    assert seen == known, (
-        f"chunk plan missing pieces: {sorted(known - seen)}"
+    assert seen == revealable, (
+        f"chunk plan missing revealable pieces: {sorted(revealable - seen)}"
     )
 
 

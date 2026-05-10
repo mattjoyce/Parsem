@@ -208,34 +208,49 @@ def test_blockquote_is_its_own_chunk() -> None:
     assert "a quote" in bq[0].text
 
 
-# --- horizontal rules (claude-axx.5) ---------------------------------------
+# --- horizontal rules (claude-axx.5, revised in claude-jvs.3) -------------
 
 
-def test_horizontal_rule_becomes_its_own_piece_and_chunk() -> None:
+def test_horizontal_rule_is_atomic_piece_but_not_a_chunk() -> None:
+    """HR remains an atomic piece (the parser sees it) but the chunker
+    no longer emits a standalone HR chunk — UAT feedback (claude-jvs.3):
+    an HR-only chunk forced the reader to spend a token to reveal what
+    visually reads as a blank line."""
     text = "Before.\n\n---\n\nAfter.\n"
     pieces, _, _, chunks, _ = _run(text)
     hr_pieces = [p for p in pieces if p.kind == "horizontal_rule"]
     assert len(hr_pieces) == 1
     hr_chunks = [c for c in chunks if c.lead_token_type == "horizontal_rule"]
-    assert len(hr_chunks) == 1
-    assert hr_chunks[0].text.strip() == "---"
+    assert hr_chunks == []
 
 
-def test_horizontal_rule_does_not_absorb_colon_lead_in() -> None:
-    """An HR is a visual break; absorbing prose into it would be wrong.
-    Even if the previous prose ends in ':', the HR stays its own chunk."""
-    text = "List below:\n\n---\n\nMore.\n"
+def test_horizontal_rule_skip_preserves_neighbouring_prose() -> None:
+    """The HR is a thematic break — skipping the chunk must not fuse
+    the surrounding prose into one chunk. 'Before.' and 'After.' must
+    land in DIFFERENT chunks (regression: an early simplify pass
+    omitted the flush and produced one fused chunk)."""
+    text = "Before.\n\n---\n\nAfter.\n"
     _, _, _, chunks, _ = _run(text)
-    kinds = [c.lead_token_type for c in chunks]
-    assert "horizontal_rule" in kinds
-    hr = next(c for c in chunks if c.lead_token_type == "horizontal_rule")
-    assert "List below" not in hr.text  # not absorbed
+    assert len(chunks) == 2
+    assert "Before." in chunks[0].text
+    assert "After." not in chunks[0].text
+    assert "After." in chunks[1].text
+    assert "Before." not in chunks[1].text
 
 
 def test_horizontal_rule_zero_read_time() -> None:
     text = "---\n"
     _, preprocessed, _, _, _ = _run(text)
     assert all(p.estimated_read_seconds == 0.0 for p in preprocessed)
+
+
+def test_horizontal_rule_only_document_produces_no_chunks() -> None:
+    """Pathological case: a doc that's nothing but an HR. With HR
+    skipped from chunking, the chunker emits zero chunks. Reader-state
+    layer guards on this elsewhere."""
+    text = "---\n"
+    _, _, _, chunks, _ = _run(text)
+    assert chunks == []
 
 
 def test_horizontal_rule_does_not_start_a_section() -> None:
@@ -281,18 +296,15 @@ def test_colon_lead_in_absorbs_into_table() -> None:
 
 
 def test_colon_lead_in_does_not_absorb_into_horizontal_rule() -> None:
-    """HR is excluded from the generalised colon-lead-in rule (claude-axx.2)
-    — there's no content to anchor onto."""
+    """HR is now skipped entirely from chunking (claude-jvs.3), so a
+    colon-terminated paragraph followed by an HR cannot pull the HR
+    into a list-with-colon-lead-in chunk — there's no HR chunk to
+    pull. The colon paragraph stays prose; the HR is gone; the
+    following prose is its own chunk."""
     text = "End of section:\n\n---\n\nNext section.\n"
     _, _, _, chunks, _ = _run(text)
-    # Prose chunk separate from HR chunk
     leads = [c.lead_token_type for c in chunks]
-    assert leads.count("horizontal_rule") == 1
-    # The colon prose stays a paragraph chunk on its own (or packed with
-    # following prose), not merged with the HR.
-    hr_idx = leads.index("horizontal_rule")
-    hr = chunks[hr_idx]
-    assert "End of section" not in hr.text
+    assert "horizontal_rule" not in leads
 
 
 # --- materialization invariants --------------------------------------------
@@ -404,5 +416,5 @@ def test_validate_chunk_plan_rejects_missing_piece() -> None:
             reason="prose_budget",
         ),
     ])
-    with pytest.raises(AssertionError, match="missing pieces"):
+    with pytest.raises(AssertionError, match="missing revealable pieces"):
         validate_chunk_plan(bad_plan, preprocessed)

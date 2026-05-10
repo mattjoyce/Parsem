@@ -71,9 +71,8 @@ def _plan(
 
         Generalised in claude-axx.2: the rule fires for *any* structural
         atomic block (code, list_run, blockquote, table) — not just
-        list_run. Pedagogical coupling beats tidy budget split. HR is
-        excluded by the caller (a thematic break has nothing to absorb
-        into).
+        list_run. Pedagogical coupling beats tidy budget split. (HR is
+        skipped earlier in the loop, so it never reaches here.)
 
         Returns True on a successful merge.
         """
@@ -101,14 +100,20 @@ def _plan(
         return True
 
     for piece in preprocessed:
-        if piece.is_structural_atomic and not piece.is_heading:
-            # code_block, list_run, list_item, blockquote, table,
-            # horizontal_rule — each is one chunk. Colon-lead-in merge
-            # applies to all of these except HR (a thematic break has
-            # no content to absorb into); claude-axx.2 generalised the
-            # rule beyond list_run.
+        if piece.is_horizontal_rule:
+            # HR is a thematic break, not content (claude-jvs.3 UAT).
+            # Flush the prose bucket so prose on either side stays
+            # separate — the break preserves the author's split — but
+            # don't emit a chunk for the HR itself.
             flush("prose_budget")
-            if not piece.is_horizontal_rule and absorb_colon_lead_in_into_block(piece):
+            continue
+        if piece.is_structural_atomic and not piece.is_heading:
+            # code_block, list_run, list_item, blockquote, table.
+            # Colon-lead-in merge folds these into a preceding
+            # colon-terminated paragraph (claude-axx.2 generalised the
+            # rule beyond list_run).
+            flush("prose_budget")
+            if absorb_colon_lead_in_into_block(piece):
                 continue
             chunks.append(_make_planned_chunk(
                 ordinal=len(chunks),
