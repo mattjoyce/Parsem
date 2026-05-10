@@ -24,6 +24,15 @@
   --pin-3: #7A9F6B;
   --pin-4: #C97B63;
   --pin-5: #9477B4;
+  /* Rating palette (claude-yda + claude-jvs.4) — single source of
+   * truth for the per-chunk rating bar, the library heatmap, and
+   * the rating-prompt resting glyph. Blue 1-2 (easy), neutral 3,
+   * amber 4 (struggle), red 5 (struggled). */
+  --rating-1: #6FA8D6;
+  --rating-2: #6FA8D6;
+  --rating-3: rgba(0, 0, 0, 0.4);
+  --rating-4: var(--reject-color);
+  --rating-5: #C24E3A;
 }
 
 html, body {
@@ -138,21 +147,20 @@ body {
   position: relative;
   overflow-y: auto;
   overflow-x: hidden;
-  /* Two-pronged scrollbar handling for the right-gutter rating dots
-   * (claude-axx.3 UAT — first pass with just scrollbar-gutter still
-   * showed scrollbar-over-dots overlap on at least one browser):
-   *
-   * 1. scrollbar-gutter: stable reserves the scrollbar's column on
-   *    the right of .reader-scroll always, present whether or not
-   *    the scrollbar is visible. On honoring browsers the scrollbar
-   *    lives OUTSIDE the layout grid entirely.
-   * 2. scrollbar-width: thin shrinks the scrollbar (~6-8px). On any
-   *    browser that ignores scrollbar-gutter, the thinner scrollbar
-   *    still has plenty of clearance from the dot stack (which now
-   *    sits ~16px inside the layout's right edge — see .rating-
-   *    prompt). Belt + suspenders. */
+  /* scrollbar-gutter: stable always reserves the scrollbar column so
+   * showing/hiding the bar never shifts content horizontally. The
+   * scrollbar itself is hidden at rest (claude-jvs.4 UAT — quiet
+   * scrollbar) and revealed only while scrolling: JS adds .is-
+   * scrolling on scroll, drops it 1s after the last event. */
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+.reader-scroll::-webkit-scrollbar { width: 0; height: 0; }
+.reader-scroll.is-scrolling { scrollbar-width: thin; }
+.reader-scroll.is-scrolling::-webkit-scrollbar { width: 6px; height: 6px; }
+.reader-scroll.is-scrolling::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 3px;
 }
 
 .layout {
@@ -301,45 +309,71 @@ body {
 .pin-dot[data-pin-color="4"] { background: var(--pin-4); }
 .pin-dot[data-pin-color="5"] { background: var(--pin-5); }
 
-/* Rating prompt — vertical 1/2/3/4/5 stack in the right gutter,
- * spatially anchored to the bottom of the current chunk (claude-
- * axx.3 UAT, spec §9.5). Absolutely positioned so it floats out
- * of the reading flow; .chunk is position: relative, so the
- * prompt's `right` is measured from the chunk's right edge.
- *
- * right: 100% + ~6px puts the digit stack just OUTSIDE the chunk's
- * right edge — into the right gutter zone. Clicks on each digit
- * rate the chunk (free, non-advancing pointer surface per §8a.1).
- */
+/* Rating prompt — single triangle glyph at rest in the right gutter,
+ * pips slide out horizontally on hover (free, non-advancing pointer
+ * surface per §8a.1). Replaces the old vertical 5-stack which
+ * collided with the link glyph on small chunks. */
 .rating-prompt {
   position: absolute;
-  /* Sits inside the right gutter, ~20px past the chunk's right edge,
-   * leaving ~16px of clearance to the layout's right edge so the
-   * vertical scrollbar (in reserved gutter or at content-box right
-   * edge, depending on browser) can never overlap the dots. */
   right: calc(-1 * var(--gutter-right) + 16px);
   bottom: 0;
   display: flex;
-  /* column-reverse so the dot for rating 1 sits at the BOTTOM, with
-   * 5 at the top — UAT preference, claude-axx.3. The DOM source
-   * order stays 1..5 ascending; only the visual flips. */
-  flex-direction: column-reverse;
+  flex-direction: row;
   align-items: center;
-  gap: 0.18em;
-  opacity: 0.4;
+  gap: 0.25em;
   font-size: 0.8em;
   line-height: 1.1;
-  transition: opacity 120ms ease;
   user-select: none;
 }
-.rating-prompt:hover { opacity: 0.9; }
-/* Rating dots — five circles in vertical stack (1 at the bottom).
- * All dots up to AND INCLUDING the chunk's rating render filled;
- * the topmost-filled dot (the "mark") carries .rating-dot--active
- * so JS can detect a toggle-off click. Click any dot to set rating
- * to that level; click the active dot to clear (claude-axx.3 UAT
- * dot-toggle UX). Keyboard N matches the click semantics: N pressed
- * with rating==N clears, otherwise sets rating to N. */
+/* Pips slide in from the right on rating-prompt hover (the glyph
+ * itself is also part of the hover region, so the popout doesn't
+ * collapse when the cursor moves between glyph and pips). Float
+ * over the chunk's bottom-right with a soft paper-tinted background
+ * so they read against text. */
+.rating-pips {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.25em;
+  padding: 2px 4px;
+  background: var(--paper);
+  border-radius: 9px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06);
+  opacity: 0;
+  transform: translateX(6px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  pointer-events: none;
+}
+.rating-prompt:hover .rating-pips,
+.rating-prompt:focus-within .rating-pips {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+/* Resting glyph — small triangle at the right of the prompt. Color
+ * reflects current rating via the data-current-rating attribute on
+ * .rating-prompt (rating-bar palette mirrors the per-chunk stripe).
+ * Unrated: muted neutral. Rated: tinted + brighter. */
+.rating-glyph {
+  display: inline-block;
+  font-size: 0.95em;
+  line-height: 1;
+  opacity: 0.4;
+  color: rgba(0, 0, 0, 0.5);
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.rating-prompt:hover .rating-glyph { opacity: 1; }
+.rating-prompt[data-current-rating="1"] .rating-glyph { color: var(--rating-1); opacity: 0.85; }
+.rating-prompt[data-current-rating="2"] .rating-glyph { color: var(--rating-2); opacity: 0.85; }
+.rating-prompt[data-current-rating="3"] .rating-glyph { color: var(--rating-3); opacity: 0.85; }
+.rating-prompt[data-current-rating="4"] .rating-glyph { color: var(--rating-4); opacity: 0.95; }
+.rating-prompt[data-current-rating="5"] .rating-glyph { color: var(--rating-5); opacity: 0.95; }
+
+/* Rating dots — five circles inside .rating-pips (1 leftmost ... 5
+ * rightmost). Filled up to AND INCLUDING the chunk's rating; the
+ * highest-filled dot carries .rating-dot--active so JS detects a
+ * toggle-off click (claude-axx.3 dot-toggle UX). Keyboard N matches:
+ * N pressed with rating==N clears, otherwise sets rating to N. */
 .rating-dot {
   background: transparent;
   border: 1px solid currentColor;
@@ -354,31 +388,91 @@ body {
 }
 .rating-dot:hover { background: rgba(0, 0, 0, 0.25); }
 .rating-dot--filled { background: currentColor; }
-/* Inline reveal symbol (spec §8a.4, claude-axx.8) — pointer-mode
- * peer of Space. Sits inline at the end of the current chunk's
- * last line so the eye encounters it at the natural reading
- * endpoint. Muted at rest (~50% body ink) so keyboard-only readers
- * don't notice it; brightens to body ink on hover. Click triggers
- * the same /reveal endpoint as Space. */
+/* Inline reveal glyph (spec §8a.4, claude-axx.8, claude-jvs UAT) —
+ * pointer-mode peer of Space. Filled diamond ♦ chosen over the prior
+ * » so the affordance reads as a chunky, distinct symbol — not as
+ * trailing punctuation. Sits inline at the end of the current chunk's
+ * last text line (build_reader_context injects the button before the
+ * last </p>, </li>, </h*>, or </blockquote>). Slightly larger and
+ * heavier than body text so the eye finds it at the natural reading
+ * endpoint without hunting; muted at rest, brightens on hover. */
 .reveal-symbol {
   background: transparent;
   border: 0;
-  padding: 0 0 0 0.25em;
-  font: inherit;
-  color: inherit;
-  opacity: 0.45;
+  padding: 0 0 0 0.35em;
+  margin: 0;
+  font-family: inherit;
+  font-size: 1.15em;
+  line-height: 1;
+  color: var(--ink);
+  opacity: 0.5;
   cursor: pointer;
-  transition: opacity 120ms ease;
+  transition: opacity 120ms ease, transform 120ms ease;
   vertical-align: baseline;
+  user-select: none;
 }
-.reveal-symbol:hover { opacity: 0.95; }
-/* Empty-bucket state — ghosted, click triggers rejection motion
- * via JS rather than advancing (mirrors the §12.5 keyboard motion). */
+.reveal-symbol:hover {
+  opacity: 1;
+  transform: translateX(1px);
+}
+/* Empty-bucket state — ghosted visual hint that no token is
+ * available. Click is NOT gated by JS on this class (claude-jvs UAT
+ * fix — bucket regenerates client-side via animation, so this class
+ * goes stale until the next server fetch; gating click on it caused
+ * the glyph to lock up after replenish). The server's
+ * X-Reveal-Outcome: bucket_empty header is the source of truth and
+ * still drives the §12.5 rejection motion. */
 .reveal-symbol--empty {
-  opacity: 0.2;
-  cursor: not-allowed;
+  opacity: 0.25;
+  cursor: pointer;
 }
-.reveal-symbol--empty:hover { opacity: 0.2; }
+.reveal-symbol--empty:hover { opacity: 0.4; transform: none; }
+
+/* Per-chunk action glyph (claude-jvs.3) — TOP of right gutter, peer
+ * of the bottom rating-prompt. Always-rendered at low opacity so it
+ * doesn't vanish mid-reach when the cursor crosses the gutter gap. */
+.chunk-actions {
+  position: absolute;
+  right: calc(-1 * var(--gutter-right) + 12px);
+  top: 0.1em;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15em;
+  opacity: 0.4;
+  transition: opacity 120ms ease;
+  user-select: none;
+}
+.chunk-actions:hover { opacity: 0.95; }
+
+.chunk-action {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-size: 0.95em;
+  line-height: 1;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background 120ms ease, color 200ms ease;
+}
+.chunk-action:hover { background: rgba(0, 0, 0, 0.08); }
+
+/* Brief success flash after navigator.clipboard.writeText resolves
+ * (JS adds the class for ~1s then removes). The colour shift is the
+ * confirmation — no toast, no popover, the affordance itself
+ * acknowledges the act. */
+.chunk-action--copied {
+  color: var(--reject-color);
+  background: rgba(200, 137, 62, 0.15);
+}
 
 /* Per-chunk rating bar (spec §14.3, claude-yda) — subtle horizontal
  * stripe at the chunk's bottom edge, tinted by the latest rating.
@@ -390,11 +484,11 @@ body {
   margin: 0.4em 0 0;
   opacity: 0.55;
 }
-.rating-bar--1 { background: #6FA8D6; }   /* light blue, easy */
-.rating-bar--2 { background: #6FA8D6; }   /* light blue, easy */
-.rating-bar--3 { background: rgba(0, 0, 0, 0.4); }  /* neutral grey */
-.rating-bar--4 { background: var(--reject-color); } /* amber, struggle starting */
-.rating-bar--5 { background: #C24E3A; }   /* red, struggled */
+.rating-bar--1 { background: var(--rating-1); }
+.rating-bar--2 { background: var(--rating-2); }
+.rating-bar--3 { background: var(--rating-3); }
+.rating-bar--4 { background: var(--rating-4); }
+.rating-bar--5 { background: var(--rating-5); }
 
 /* Library heatmap strip (spec §9.1, claude-yda) — one thin column
  * per chunk, tinted by the latest rating. Rendered inside the
@@ -415,11 +509,11 @@ body {
   min-width: 1px;
   background: transparent;
 }
-.library-heatmap__cell--1 { background: #6FA8D6; }
-.library-heatmap__cell--2 { background: #6FA8D6; }
-.library-heatmap__cell--3 { background: rgba(0, 0, 0, 0.4); }
-.library-heatmap__cell--4 { background: var(--reject-color); }
-.library-heatmap__cell--5 { background: #C24E3A; }
+.library-heatmap__cell--1 { background: var(--rating-1); }
+.library-heatmap__cell--2 { background: var(--rating-2); }
+.library-heatmap__cell--3 { background: var(--rating-3); }
+.library-heatmap__cell--4 { background: var(--rating-4); }
+.library-heatmap__cell--5 { background: var(--rating-5); }
 
 .rating-dot--active:hover {
   /* Hover on the active dot signals "click again to clear." Hollow-

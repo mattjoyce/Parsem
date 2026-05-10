@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
@@ -59,11 +59,22 @@ def _render_partial(request: Request, state: ReaderState) -> HTMLResponse:
 
 
 @router.get("/documents/{document_id}/reader", response_class=HTMLResponse)
-def get_document_reader(document_id: int, request: Request) -> HTMLResponse:
+def get_document_reader(
+    document_id: int,
+    request: Request,
+    chunk: int | None = Query(None),
+) -> HTMLResponse:
     """Open the requested document. If `app.state.reader` is already
     on this doc, render with the in-memory state (preserves session
     fields like `last_active_pin_color`); otherwise rebuild from DB
     and swap. 404 when the doc does not exist.
+
+    The optional ``?chunk=N`` deep-link param sets ``current_position``
+    to N before rendering. Out-of-range values silently clamp to the
+    nearest valid revealed chunk (``[0, high_water_position]``) — a
+    shared URL must never 404 the receiver, even if their session is
+    behind the linker's frontier. Forward-of-frontier deep-link is
+    intentionally not supported (would bypass §8a.1 and the bucket).
 
     Single-tab assumption: this swap is process-global. Two browser
     tabs visiting different docs will silently overwrite each other's
@@ -80,6 +91,8 @@ def get_document_reader(document_id: int, request: Request) -> HTMLResponse:
             raise HTTPException(status_code=404, detail="Document not found")
         request.app.state.reader = new_state
         state = new_state
+    if chunk is not None:
+        state.current_position = max(0, min(chunk, state.high_water_position))
     state.event_log.open_document(
         document_id=document_id, created_at=state.clock()
     )

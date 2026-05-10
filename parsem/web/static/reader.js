@@ -164,6 +164,28 @@
     }
   }
 
+  // Copy `value` to clipboard and flash the trigger with a brief
+  // --copied class. Rapid double-clicks reset the timer so the second
+  // flash isn't cut short by the first's pending removal. Silent on
+  // permission/secure-context failures — the user notices the missing
+  // paste and retries.
+  const COPIED_FLASH_MS = 900;
+  function copyToClipboard(value, button) {
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(value).then(
+      () => {
+        const prev = Number(button.dataset.copiedTimer);
+        if (prev) clearTimeout(prev);
+        button.classList.add("chunk-action--copied");
+        button.dataset.copiedTimer = String(setTimeout(() => {
+          button.classList.remove("chunk-action--copied");
+          delete button.dataset.copiedTimer;
+        }, COPIED_FLASH_MS));
+      },
+      (err) => console.warn("Clipboard write failed:", err),
+    );
+  }
+
   function playRejection() {
     const cc = currentChunk();
     const col = document.querySelector(".column");
@@ -326,22 +348,37 @@
     mouseDownT = Date.now();
   });
   document.addEventListener("click", (event) => {
-    // Reveal symbol click — pointer-mode peer of Space (§8a.4,
-    // claude-axx.8). Same code path as Space: same /reveal endpoint,
-    // same X-Reveal-Outcome header drives the rejection motion when
-    // the bucket is empty. Bypasses the §8.1 return-first guard per
-    // §8a.3 — a click is the explicit attention signal.
+    // Per-chunk action glyph click (claude-jvs.3) — copy-link only.
+    // Native browser select-and-copy handles chunk content; no
+    // separate copy-text affordance. stopPropagation keeps the
+    // chunk-body handler below from firing on the same click.
+    const action = event.target.closest(".chunk-action");
+    if (action && action.dataset.action === "copy-link") {
+      event.preventDefault();
+      event.stopPropagation();
+      const chunkEl = action.closest(".chunk");
+      if (!chunkEl) return;
+      const url = `${window.location.origin}${window.location.pathname}?chunk=${chunkEl.dataset.chunkPosition}`;
+      copyToClipboard(url, action);
+      return;
+    }
+    // Reveal glyph click — pointer-mode peer of Space (§8a.4,
+    // claude-axx.8, claude-jvs). Same code path as Space: same /reveal
+    // endpoint, same X-Reveal-Outcome header drives the rejection
+    // motion when the bucket is empty. Bypasses the §8.1 return-first
+    // guard per §8a.3 — a click is the explicit attention signal.
+    //
+    // Note: the prior client-side empty-bucket shortcut (read the
+    // server-rendered ghost-class and play rejection locally) was
+    // removed. That class only updates on server re-render; bucket
+    // regeneration happens client-side via CSS animation, so the
+    // class went stale and the glyph would lock up after replenish
+    // until something else (Space) forced a fetch. Always going to
+    // the server costs one round trip on empty clicks — correctness
+    // wins. The header path in performAction handles the rejection.
     const revealSymbol = event.target.closest(".reveal-symbol");
     if (revealSymbol) {
       event.preventDefault();
-      // Empty-bucket: skip the round trip and play rejection locally.
-      // The CSS marker drives this; the server would return
-      // X-Reveal-Outcome: bucket_empty either way, but doing it
-      // client-side keeps the visual instant and avoids a flicker.
-      if (revealSymbol.classList.contains("reveal-symbol--empty")) {
-        playRejection();
-        return;
-      }
       performAction({ method: "POST", url: "/reveal" });
       return;
     }
@@ -426,4 +463,22 @@
     cancelAnimationFrame(resizeRAF);
     resizeRAF = requestAnimationFrame(() => settleAtCurrent({ behavior: "auto" }));
   });
+
+  // Quiet scrollbar — show only while actively scrolling. Toggle
+  // .is-scrolling on .reader-scroll; CSS hides the bar at rest and
+  // renders a thin one when the class is present. Debounced so a
+  // flurry of wheel events doesn't thrash the class.
+  //
+  // useCapture=true is required: scroll events do NOT bubble (DOM
+  // spec), so a document-level listener only sees them in the
+  // capture phase. Don't "simplify" the third argument away.
+  const SCROLLBAR_FADE_MS = 1000;
+  let scrollFadeTimer = 0;
+  document.addEventListener("scroll", (event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || !target.classList.contains("reader-scroll")) return;
+    target.classList.add("is-scrolling");
+    clearTimeout(scrollFadeTimer);
+    scrollFadeTimer = setTimeout(() => target.classList.remove("is-scrolling"), SCROLLBAR_FADE_MS);
+  }, true);
 })();

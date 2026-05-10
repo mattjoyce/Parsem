@@ -91,13 +91,19 @@ def test_reader_js_binds_chunk_body_click(reader_js_source: str) -> None:
 
 
 def test_reader_js_binds_reveal_symbol_click(reader_js_source: str) -> None:
-    """claude-axx.8 / spec §8a.4 — clicking the inline » triggers
-    /reveal (pointer-mode peer of Space). Empty-bucket variant plays
-    the rejection motion locally without a round trip."""
+    """claude-axx.8 / spec §8a.4 / claude-jvs — clicking the inline
+    glyph always POSTs /reveal (pointer-mode peer of Space). Bucket-
+    empty rejection motion is driven by the server's X-Reveal-Outcome
+    header (handled in performAction), NOT by reading the
+    --empty class — that was the bug fixed in claude-jvs."""
     assert "reveal-symbol" in reader_js_source
-    assert "reveal-symbol--empty" in reader_js_source
     assert "/reveal" in reader_js_source
     assert "playRejection" in reader_js_source
+    # Regression guard: the JS must NOT short-circuit clicks on the
+    # --empty class. The class is server-rendered and goes stale when
+    # the bucket regenerates client-side; gating the click on it
+    # caused the glyph to lock up after replenish (claude-jvs UAT).
+    assert "reveal-symbol--empty" not in reader_js_source
 
 
 def test_reader_js_handles_rating_key_toggle(reader_js_source: str) -> None:
@@ -129,6 +135,30 @@ def test_reader_js_handles_space_resume(reader_js_source: str) -> None:
 
 def test_reader_js_initial_settle_via_request_animation_frame(reader_js_source: str) -> None:
     assert "requestAnimationFrame" in reader_js_source
+
+
+def test_reader_js_quiet_scrollbar(reader_js_source: str) -> None:
+    """claude-jvs.4 — JS toggles .is-scrolling on .reader-scroll so
+    the scrollbar shows only during active scroll. Debounced removal
+    so a flurry of wheel events doesn't thrash the class."""
+    assert "is-scrolling" in reader_js_source
+    assert "reader-scroll" in reader_js_source
+    # Some debouncing primitive must be in play.
+    assert "setTimeout" in reader_js_source or "requestAnimationFrame" in reader_js_source
+
+
+def test_reader_js_binds_chunk_action_clicks(reader_js_source: str) -> None:
+    """claude-jvs.3 — per-chunk action glyph wires the copy-link click
+    to navigator.clipboard.writeText. copy-text was removed; native
+    browser select-and-copy handles chunk content. stopPropagation
+    keeps the chunk-body click handler from firing on the same click."""
+    assert "chunk-action" in reader_js_source
+    assert '"copy-link"' in reader_js_source
+    assert "clipboard.writeText" in reader_js_source
+    assert "stopPropagation" in reader_js_source
+    assert "chunk-action--copied" in reader_js_source
+    # Regression guard: copy-text branch was removed in claude-jvs.3.
+    assert '"copy-text"' not in reader_js_source
 
 
 def test_reader_js_settles_on_window_resize(reader_js_source: str) -> None:

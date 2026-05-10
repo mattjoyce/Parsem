@@ -37,6 +37,49 @@ def render_chunk_html(text: str) -> Markup:
     return Markup(_RENDERER.render(text))
 
 
+# Closing tags we'll inject the inline reveal glyph BEFORE — text-bearing
+# blocks where the glyph naturally follows the last character of prose.
+# `<pre>` and `<table>` are intentionally excluded: injecting inside a
+# code fence would break monospace flow. Chunks composed entirely of
+# such blocks fall back to append-after-close.
+_INLINE_GLYPH_TARGETS: tuple[str, ...] = (
+    "</p>",
+    "</li>",
+    "</h1>", "</h2>", "</h3>", "</h4>", "</h5>", "</h6>",
+    "</blockquote>",
+)
+
+# The two pre-rendered glyph variants. Filled diamond ♦ (U+2666) chosen
+# over the prior » so the affordance reads as a chunky symbol, not as
+# trailing punctuation (claude-jvs UAT). Empty-bucket variant carries
+# the --empty modifier for the visual ghost; JS no longer reads it for
+# click routing (server's X-Reveal-Outcome is authoritative — claude-
+# jvs fix for the bucket-regen click bug).
+_REVEAL_BTN: Markup = Markup(
+    '<button type="button" class="reveal-symbol" '
+    'aria-label="Reveal next chunk">&#9830;</button>'
+)
+_REVEAL_BTN_EMPTY: Markup = Markup(
+    '<button type="button" class="reveal-symbol reveal-symbol--empty" '
+    'aria-label="Reveal next chunk" aria-disabled="true">&#9830;</button>'
+)
+
+
+def _inject_reveal_symbol(html: Markup, button: Markup) -> Markup:
+    """Insert ``button`` immediately before the latest text-bearing
+    closing tag in ``html`` so the inline reveal glyph sits at the end
+    of the chunk's last text line — not on a new line below. Falls
+    back to appending if no text-bearing block is present (rare —
+    pure-code-fence chunks)."""
+    last_pos = max(
+        (html.rfind(tag) for tag in _INLINE_GLYPH_TARGETS),
+        default=-1,
+    )
+    if last_pos == -1:
+        return html + button
+    return html[:last_pos] + button + html[last_pos:]
+
+
 @dataclass(frozen=True)
 class VisibleChunk:
     """Template-side bundle of a chunk and its rendered HTML.
@@ -157,9 +200,25 @@ def build_reader_context(state: ReaderState) -> dict[str, Any]:
     )
     filled = tokens_now(state.paid_reveal_times, state.bucket_config, state.clock())
     # Bucket-empty drives the reveal symbol's ghosted state (§8a.4) — when
-    # the bucket has no tokens, clicking the inline » triggers the §12.5
-    # rejection motion instead of advancing.
+    # the bucket has no tokens, the server-rendered class hints the visual.
+    # JS no longer reads it for click routing; the server's X-Reveal-Outcome
+    # header is authoritative (claude-jvs — bucket-regen click bug).
     bucket_empty = filled == 0
+    # Glyph injection runs POST-cache — context-dependent state
+    # (bucket_empty, end-of-document, current vs settled) never enters
+    # render_chunk_html's lru_cache key. visible[current_position]
+    # indexes directly because revealed_chunks returns chunks[:high+1]
+    # in position order. The bounds guard handles transient states
+    # where current_position > high_water_position (e.g. a jump-to-pin
+    # to a pin set on an unrevealed chunk in tests) — in that case the
+    # current chunk isn't visible at all, so there's no glyph to inject.
+    if upcoming is not None and 0 <= state.current_position < len(visible):
+        button = _REVEAL_BTN_EMPTY if bucket_empty else _REVEAL_BTN
+        current = visible[state.current_position]
+        visible[state.current_position] = VisibleChunk(
+            chunk=current.chunk,
+            html=_inject_reveal_symbol(current.html, button),
+        )
     progress_current = state.current_position + 1
     progress_total = len(state.chunks)
     return {
