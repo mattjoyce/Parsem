@@ -10,17 +10,20 @@ Parsem needs to ingest both Markdown and PDF documents from URLs, file uploads, 
 
 ## Decision
 
-### Storage topology
+### Storage topology — two NAS paths
 
-- **Parsem runs in a slim Docker container on unRAID.** Application code is the container; data is bind-mounted from `/mnt/user/appdata/parsem/`.
-- **All persistent state lives on NAS** under `/mnt/user/appdata/parsem/`, including `parsem.db`. The container is stateless on restart.
-- **Dev path** stays at `./data/` via env-driven config (one variable, two values).
+- **Parsem runs in a slim Docker container on unRAID.** Application code is the container; data is bind-mounted from two NAS paths:
+  - **`/mnt/user/appdata/parsem/`** — app state. Holds `parsem.db` and any config. Standard unRAID appdata convention.
+  - **`/mnt/user/Library/parsem-library/`** — content library. Holds originals + inbound dirs. The "Library" share is also mounted by Marker (see `claude-08g` PRD), giving both services a shared view of the corpus.
+- **Dev paths** are env-driven: `./data/` for app state, `./data/library/` for content (one variable per path, two values each).
 
 ### Directory contract
 
 ```
 /mnt/user/appdata/parsem/
-├── parsem.db                     # SQLite, single source of state
+└── parsem.db                     # SQLite, single source of state
+
+/mnt/user/Library/parsem-library/
 ├── inbound/
 │   ├── raw/                      # drop zone — web upload, manual drop, URL fetch
 │   └── converted/                # Marker writes here
@@ -39,23 +42,26 @@ Three entry points converge on `inbound/raw/`:
 
 A filesystem-watcher on `inbound/raw/` is the unifying mechanism. On detection:
 - `.md` → ingest in place, then move to `originals/<doc_id>.md`.
-- `.pdf` → POST to Marker (HTTP, via Ductile on unRAID) with the input path; await output in `inbound/converted/`.
+- `.pdf` → call the `ductile-marker` plugin (HTTP) with the input path; the plugin spawns a transient `docker run --rm --gpus all marker:latest …` per the `claude-08g` PRD; await output in `inbound/converted/`.
 
-### Marker trigger — dual signal
+### Marker trigger — monitor only
 
-Parsem learns Marker has finished via TWO complementary mechanisms:
+Parsem learns Marker has finished by watching `inbound/converted/`:
 
-- **Fast path: callback.** Marker POSTs to `/ingest/converted` with the converted file path when it finishes. Fires immediately, no polling.
-- **Fallback: monitor.** A second filesystem-watcher on `inbound/converted/` catches anything the callback missed (Marker can't reach Parsem, callback dropped, manual drops by other tools). Always works, slightly slower trigger.
+- **Filesystem-watcher** on `inbound/converted/`. Marker writes the converted file atomically; the watcher catches the new file and ingests it.
+- **No callback URL.** Marker is a transient `--rm` container with no persistent identity to call from; the Ductile plugin response is just the job state. The watcher IS the trigger; it also catches manual drops and Marker upgrades that bypass the plugin.
 
-Both routes go through one ingest function with hash-keyed dedup, so a callback + a monitor event for the same file ingest exactly once.
+Hash-keyed dedup guards against double-ingest (e.g. user re-drops the same file).
+
+(An earlier draft of this ADR proposed both callback and monitor. Reconciling with the `claude-08g` PRD: Marker's transient-container model makes a stable callback endpoint awkward; monitor-only is sufficient and matches the existing design.)
 
 ### Why these choices
 
 - **NAS as filesystem (not S3 / object store):** zero protocol surface change, code stays the same as today. SQLite-on-NAS works with WAL on unRAID; tested in similar Ductile services.
-- **Both callback + monitor:** monitor alone polls, callback alone is fragile to network blips and won't catch manual drops. Together they're cheap and complete.
+- **Two NAS paths (appdata + Library) instead of one:** mirrors unRAID's standard split between service config (`appdata`) and shared content (`Library`). Marker only needs `Library`; Parsem mounts both. Cleaner permissions if a third service ever needs the corpus too.
+- **Monitor-only Marker trigger:** the existing PRD's transient-container model rules out a clean callback endpoint. Monitor is the simplest contract and naturally absorbs manual drops + Marker upgrades.
 - **Both web form + NAS drop:** the form is essential for URLs (you can't drag a URL into a folder); the NAS drop folder is convenient for files you already have on disk. Same pipeline either way.
-- **Async only:** Marker is too slow for a sync request. Library shows a "converting…" placeholder; the flip-to-ready happens via the same poll/swap pattern the reader already uses.
+- **Async only:** Marker is too slow (30s–3min per PDF, per `claude-08g`) for a sync request. Library shows a "converting…" placeholder; the flip-to-ready happens via the same poll/swap pattern the reader already uses.
 
 ### Phasing
 
