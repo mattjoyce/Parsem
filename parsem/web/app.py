@@ -12,6 +12,8 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from parsem.config import IngestSettings
+from parsem.ingest.url_fetch import DEFAULT_MAX_BYTES, DEFAULT_TIMEOUT_SECONDS
 from parsem.ingest.watcher import start as start_watcher
 from parsem.web.routes.ingest import router as ingest_router
 from parsem.web.routes.library import router as library_router
@@ -29,6 +31,7 @@ def create_app(
     db: sqlite3.Connection,
     originals_dir: Path,
     inbound_raw_dir: Path | None = None,
+    ingest_settings: IngestSettings | None = None,
     enable_watcher: bool = True,
 ) -> FastAPI:
     """Build the FastAPI app wired to a ReaderState plus the SQLite
@@ -59,6 +62,12 @@ def create_app(
     app.state.db = db
     app.state.originals_dir = originals_dir
     app.state.inbound_raw_dir = raw_dir
+    app.state.url_timeout_seconds = (
+        ingest_settings.url_timeout_seconds if ingest_settings else DEFAULT_TIMEOUT_SECONDS
+    )
+    app.state.url_max_bytes = (
+        ingest_settings.url_max_bytes if ingest_settings else DEFAULT_MAX_BYTES
+    )
     app.state.templates = Jinja2Templates(directory=_TEMPLATES_DIR)
     app.include_router(library_router)
     app.include_router(reader_router)

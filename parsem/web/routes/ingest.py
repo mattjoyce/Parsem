@@ -23,7 +23,12 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from parsem.ingest.paths import unique_inbound_path
-from parsem.ingest.url_fetch import UrlFetchError, fetch
+from parsem.ingest.url_fetch import (
+    DEFAULT_MAX_BYTES,
+    DEFAULT_TIMEOUT_SECONDS,
+    UrlFetchError,
+    fetch,
+)
 
 router = APIRouter()
 
@@ -39,13 +44,15 @@ async def post_ingest(
     """Drop a file or URL into `inbound/raw/`. Form submission redirects
     to /library; JSON submission returns 202 with the queued filename."""
     inbound_raw_dir: Path = request.app.state.inbound_raw_dir
+    timeout = getattr(request.app.state, "url_timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
+    max_bytes = getattr(request.app.state, "url_max_bytes", DEFAULT_MAX_BYTES)
 
     content_type = request.headers.get("content-type", "")
     if content_type.startswith("application/json"):
         body_data = await request.json()
         body = IngestUrlBody.model_validate(body_data)
         try:
-            fetched = fetch(body.url)
+            fetched = fetch(body.url, timeout_seconds=timeout, max_bytes=max_bytes)
         except UrlFetchError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         target = unique_inbound_path(inbound_raw_dir, fetched.suggested_filename)

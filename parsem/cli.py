@@ -1,15 +1,15 @@
 """CLI entry point. Spec: parsem-spec.md §17.1, §25.1; ADR 0001 (cycle 1).
 
 Subcommands:
-    parsem               # back-compat — runs the server
-    parsem serve         # explicit server start
-    parsem add <url|file>  # drop into inbound/raw/ for the watcher
+    parsem [--config PATH]                # back-compat — runs the server
+    parsem serve [--config PATH] [--host H] [--port P]
+    parsem add <url|file> [--config PATH]
 
-`build_app()` connects to the SQLite DB, migrates the schema,
-idempotently seeds the bundled welcome corpus, and returns a
-FastAPI app whose `app.state.reader` is opened on the welcome doc.
-Path roots come from `parsem.config` — set `PARSEM_DATA_DIR` and
-`PARSEM_LIBRARY_DIR` to override defaults in prod.
+Config is loaded via `loaden` from `~/.config/parsem/config.yaml`
+(or `--config PATH`). The bundled default template is written there
+on first run so the user has a file to edit. Env vars referenced via
+`${VAR:-default}` inside the YAML remain a clean override surface
+for ops (Docker, unRAID).
 """
 
 from __future__ import annotations
@@ -20,12 +20,19 @@ import sqlite3
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import uvicorn
 from fastapi import FastAPI
 
-from parsem.config import PROJECT_ROOT, Paths, ensure_library_layout, resolve_paths
+from parsem.config import (
+    PROJECT_ROOT,
+    Paths,
+    Settings,
+    ensure_library_layout,
+    load_settings,
+)
 from parsem.ingest.paths import unique_inbound_path
 from parsem.ingest.url_fetch import UrlFetchError, fetch
 from parsem.store.db import connect, migrate
@@ -67,13 +74,20 @@ def _ensure_welcome_seeded(conn: sqlite3.Connection) -> int:
     return document_id
 
 
-def build_app(paths: Paths | None = None) -> FastAPI:
-    """Build the FastAPI app against the file-backed DB at `paths.db_path`.
-    Default resolves from env / config. Tests pass an explicit `Paths`
-    pointing at tmpdir paths."""
-    resolved = paths or resolve_paths()
-    ensure_library_layout(resolved)
-    conn = connect(resolved.db_path)
+def build_app(
+    settings: Settings | None = None,
+    *,
+    paths: Paths | None = None,
+) -> FastAPI:
+    """Build the FastAPI app. Pass `settings` to use the full loaden-
+    loaded config, or `paths` for a paths-only build (tests). With
+    neither, loads from the default config path."""
+    if settings is None and paths is None:
+        settings = load_settings()
+    resolved_paths = paths or (settings.paths if settings else None)
+    assert resolved_paths is not None  # one of the two branches set it
+    ensure_library_layout(resolved_paths)
+    conn = connect(resolved_paths.db_path)
     migrate(conn)
     welcome_id = _ensure_welcome_seeded(conn)
     state = build_reader_state_for_document(
@@ -83,13 +97,18 @@ def build_app(paths: Paths | None = None) -> FastAPI:
     return create_app(
         state,
         db=conn,
-        originals_dir=resolved.originals_dir,
-        inbound_raw_dir=resolved.inbound_raw_dir,
+        originals_dir=resolved_paths.originals_dir,
+        inbound_raw_dir=resolved_paths.inbound_raw_dir,
+        ingest_settings=settings.ingest if settings else None,
     )
 
 
 def _cmd_serve(args: argparse.Namespace, *, runner: Callable[..., Any]) -> int:
-    runner(build_app(), host=args.host, port=args.port)
+    settings = load_settings(args.config)
+    # CLI flags override config-file values when explicitly passed.
+    host = args.host if args.host is not None else settings.server.host
+    port = args.port if args.port is not None else settings.server.port
+    runner(build_app(settings), host=host, port=port)
     return 0
 
 
@@ -98,14 +117,19 @@ def _cmd_add(args: argparse.Namespace) -> int:
     through the server. The watcher (when running) will ingest it; if
     the server isn't running, the file waits in inbound/raw/ until the
     next startup sweep picks it up."""
-    paths = resolve_paths()
+    settings = load_settings(args.config)
+    paths = settings.paths
     ensure_library_layout(paths)
     target_dir = paths.inbound_raw_dir
     source = args.target
 
     if source.startswith(("http://", "https://")):
         try:
-            fetched = fetch(source)
+            fetched = fetch(
+                source,
+                timeout_seconds=settings.ingest.url_timeout_seconds,
+                max_bytes=settings.ingest.url_max_bytes,
+            )
         except UrlFetchError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
@@ -113,8 +137,6 @@ def _cmd_add(args: argparse.Namespace) -> int:
         target.write_bytes(fetched.content)
         print(f"queued: {target.name}")
         return 0
-
-    from pathlib import Path
 
     src_path = Path(source).expanduser().resolve()
     if not src_path.is_file():
@@ -134,26 +156,36 @@ def main(
     """Build the app and hand it to uvicorn (`serve`), or run a CLI
     subcommand. Bare `parsem` keeps back-compat by running the server."""
     parser = argparse.ArgumentParser(prog="parsem")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Path to YAML config (default: ~/.config/parsem/config.yaml)",
+    )
     sub = parser.add_subparsers(dest="cmd")
 
     p_serve = sub.add_parser("serve", help="run the web server")
-    p_serve.add_argument("--host", default="127.0.0.1")
-    p_serve.add_argument("--port", type=int, default=8000)
+    p_serve.add_argument(
+        "--config", type=Path, default=None,
+        help="Path to YAML config (default: ~/.config/parsem/config.yaml)",
+    )
+    p_serve.add_argument("--host", default=None)
+    p_serve.add_argument("--port", type=int, default=None)
 
     p_add = sub.add_parser("add", help="drop a URL or file into inbound/raw/")
+    p_add.add_argument(
+        "--config", type=Path, default=None,
+        help="Path to YAML config (default: ~/.config/parsem/config.yaml)",
+    )
     p_add.add_argument("target", help="URL or path to a local file")
 
     args = parser.parse_args(argv)
     if args.cmd == "add":
         return _cmd_add(args)
-    # Bare `parsem` (no subcommand) is back-compat for `parsem serve`
-    # with defaults. argparse's subparsers leave args.cmd=None in
-    # that case; we don't reach this branch via mistyped commands
-    # because parse_args would have already exited.
     if args.cmd in (None, "serve"):
         if args.cmd is None:
-            args.host = "127.0.0.1"
-            args.port = 8000
+            args.host = None
+            args.port = None
         return _cmd_serve(args, runner=_runner)
     parser.error(f"unknown command: {args.cmd}")
     return 2  # unreachable; argparse exits before

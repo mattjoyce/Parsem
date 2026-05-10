@@ -402,6 +402,18 @@ wheels = [
 ]
 
 [[package]]
+name = "loaden"
+version = "0.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyyaml" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2b/a4/58b794ffe5903be0df8fcbee3aac106163537ea296f24f25a4bcf806e697/loaden-0.1.1.tar.gz", hash = "sha256:32f585146aadda1d88e87941708eb4d05c822afb4a23d2133c6acfe685a7eac6", size = 27782, upload-time = "2026-04-02T23:54:31.549Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/67/1e4d8e6d7b4778ba3633912541002b5d6a7ad849d244bc5100db7df7fd73/loaden-0.1.1-py3-none-any.whl", hash = "sha256:35cc9a3e01d626676975a366642ab26eda209abeac36f98fd04b55886adb183a", size = 22277, upload-time = "2026-04-02T23:54:30.194Z" },
+]
+
+[[package]]
 name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -573,6 +585,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
+    { name = "loaden" },
     { name = "markdown-it-py" },
     { name = "pysbd" },
     { name = "python-multipart" },
@@ -593,6 +606,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "jinja2", specifier = ">=3.1" },
+    { name = "loaden", specifier = ">=0.1.0" },
     { name = "markdown-it-py", specifier = ">=3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.13" },
     { name = "pysbd", specifier = ">=0.3.4" },
