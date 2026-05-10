@@ -254,8 +254,19 @@ ALTER TABLE document_revisions ADD COLUMN extraction_run_id INTEGER
 ALTER TABLE atomic_pieces ADD COLUMN external_anchor_json TEXT;
 """
 
+# v4 — content-hash dedup for the ductile-driven ingest path (ADR 0002).
+# `documents.source_hash` is the SHA-256 of the originally-arrived bytes
+# (the .md text or the .pdf binary). The /ingest/raw-arrived endpoint
+# looks it up before doing any work; a hit returns action=duplicate
+# without inserting a second row. NULL on legacy rows (cycle 1 docs);
+# the lookup index is built so NULLs don't collide. No backfill.
+SCHEMA_V4 = """
+ALTER TABLE documents ADD COLUMN source_hash TEXT;
+CREATE INDEX idx_documents_source_hash ON documents(source_hash);
+"""
+
 # Forward-only migration list. Index = (version - 1). Append, never edit.
-MIGRATIONS: list[str] = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3]
+MIGRATIONS: list[str] = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4]
 
 
 def connect(path: str | Path = ":memory:") -> sqlite3.Connection:

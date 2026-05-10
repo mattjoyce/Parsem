@@ -509,6 +509,18 @@ body {
   min-width: 1px;
   background: transparent;
 }
+/* Status pill colouring for library rows. The converting state is the
+ * only one that carries an in-flight feel; the others rely on the
+ * adjacent action button + percent text to communicate. */
+.library-status-converting {
+  color: #6b6b6b;
+  font-style: italic;
+}
+.library-converting-hint {
+  opacity: 0.65;
+  font-size: 0.85em;
+}
+
 .library-heatmap__cell--1 { background: var(--rating-1); }
 .library-heatmap__cell--2 { background: var(--rating-2); }
 .library-heatmap__cell--3 { background: var(--rating-3); }

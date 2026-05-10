@@ -1,8 +1,9 @@
 # ADR 0001: NAS-backed ingest pipeline with Marker conversion
 
-- **Status:** accepted
+- **Status:** accepted (eventing portion superseded by ADR 0002)
 - **Date:** 2026-05-10
 - **Tracking:** bd `claude-mwx` (epic) + `.1` `.2` `.3` (cycles)
+- **Superseded sections:** "Ingest flow" (watcher portion) and "Marker trigger — monitor only" — see ADR 0002 for the ductile-driven eventing model that replaces them. The directory contract and phasing in this ADR remain authoritative.
 
 ## Context
 

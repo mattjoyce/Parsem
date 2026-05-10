@@ -21,6 +21,9 @@ The settings tree:
     ingest:
       url_timeout_seconds: per-URL fetch timeout
       url_max_bytes:       per-URL fetch size cap (bytes)
+      callback_token:      bearer token required by the ductile-driven
+                           /ingest/raw-arrived and /ingest/converted-arrived
+                           endpoints (ADR 0002). Empty = permissive (dev).
 """
 
 from __future__ import annotations
@@ -56,6 +59,10 @@ server:
 ingest:
   url_timeout_seconds: 30
   url_max_bytes: 52428800  # 50 MiB
+  # Bearer token required on /ingest/raw-arrived and
+  # /ingest/converted-arrived (the ductile callbacks). Empty value
+  # means accept any caller — useful in dev; set in prod.
+  callback_token: ${PARSEM_INGEST_TOKEN:-}
 """
 
 
@@ -91,6 +98,7 @@ class ServerSettings:
 class IngestSettings:
     url_timeout_seconds: float
     url_max_bytes: int
+    callback_token: str  # empty string = no auth (dev); set = require match
 
 
 @dataclass(frozen=True)
@@ -157,6 +165,7 @@ def _settings_from_dict(raw: dict[str, Any]) -> Settings:
         ingest=IngestSettings(
             url_timeout_seconds=float(get(raw, "ingest.url_timeout_seconds", 30.0)),
             url_max_bytes=int(get(raw, "ingest.url_max_bytes", 50 * 1024 * 1024)),
+            callback_token=str(get(raw, "ingest.callback_token", "") or ""),
         ),
     )
 

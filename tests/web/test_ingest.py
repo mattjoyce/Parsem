@@ -1,10 +1,10 @@
-"""Tests for the ingest pipeline (claude-mwx.1).
+"""Tests for the ingest pipeline (claude-mwx.1 + claude-mwx.2).
 
-The synchronous /upload route was replaced by async POST /ingest +
-filesystem-watcher; tests here cover the route surface (write to
-inbound/raw/, content-type dispatch, redirect/JSON shapes) and the
-watcher's process_file core. Round-trip tests use process_file
-directly to avoid threading the watcher into the test setup.
+POST /ingest writes drops to inbound/raw/; ductile then knocks the
+arrivals endpoints to actually ingest. Tests here cover the route
+surface (write to inbound/raw/, content-type dispatch, redirect/JSON
+shapes) and round-trip via the synchronous arrivals core
+(`process_raw_arrival`) to keep timing deterministic.
 """
 
 from __future__ import annotations
@@ -18,8 +18,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from parsem.cli import RESUME_WARM_CHUNKS_DEFAULT
+from parsem.ingest.arrivals import process_raw_arrival
 from parsem.ingest.url_fetch import FetchedFile
-from parsem.ingest.watcher import process_file
 from parsem.store.db import connect, migrate
 from parsem.store.documents import load_document
 from parsem.web.app import create_app
@@ -28,8 +28,9 @@ from parsem.web.state import build_reader_state_for_document, empty_reader_state
 
 @pytest.fixture
 def fresh_app(tmp_path: Path) -> Iterator[tuple[TestClient, sqlite3.Connection, Path]]:
-    """Empty in-memory DB + tmp library dir. Watcher disabled so the
-    suite stays deterministic — tests call process_file() directly."""
+    """Empty in-memory DB + tmp library dir. Tests call
+    `process_raw_arrival` directly to simulate ductile's knock without
+    needing the HTTP layer for round-trip assertions."""
     conn = connect(":memory:")
     migrate(conn)
     library = tmp_path / "library"
@@ -42,7 +43,6 @@ def fresh_app(tmp_path: Path) -> Iterator[tuple[TestClient, sqlite3.Connection, 
         db=conn,
         originals_dir=originals,
         inbound_raw_dir=raw,
-        enable_watcher=False,
     )
     with TestClient(app) as client:
         yield client, conn, originals
@@ -148,53 +148,104 @@ def test_post_ingest_sanitizes_filename(
     assert any(p.name.endswith("passwd.md") for p in raw_dir.iterdir())
 
 
-# Watcher integration — process_file is the synchronous test seam
+# Round-trip via the arrivals core
 # ─────────────────────────────────────────────────────────────
 
 
-def test_process_file_ingests_md_and_moves_to_originals(
+def test_process_raw_arrival_ingests_md_and_moves_to_originals(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
-    """Drop a .md into raw/, call process_file: doc row inserted,
-    chunks parsed, file moved to originals/<doc_id>.md."""
-    client, conn, originals = fresh_app
+    """Drop a .md into raw/, call the arrivals core: doc row inserted,
+    chunks parsed, file moved to originals/<doc_id>.md, action=ingested."""
+    _client, conn, originals = fresh_app
     raw = originals.parent / "inbound" / "raw"
     src = raw / "drop.md"
     src.write_text("# Title\n\nBody paragraph.\n", encoding="utf-8")
-    doc_id = process_file(src, conn=conn, originals_dir=originals)
-    assert doc_id is not None
+    result = process_raw_arrival(src, conn=conn, originals_dir=originals)
+    assert result.action == "ingested"
+    assert result.document_id is not None
     assert not src.exists()  # moved
-    assert (originals / f"{doc_id}.md").exists()
-    doc = load_document(conn, doc_id)
+    assert (originals / f"{result.document_id}.md").exists()
+    doc = load_document(conn, result.document_id)
     assert doc is not None
     assert doc.title == "drop"
 
 
-def test_process_file_skips_non_md(
+def test_process_raw_arrival_pdf_stages_for_marker(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
-    """Non-.md files are left alone (cycle 2 will route .pdf to Marker)."""
-    client, conn, originals = fresh_app
+    """A .pdf gets a converting row, moves to originals/<id>.pdf, and
+    returns submit_to_marker so ductile knows to call Marker."""
+    _client, conn, originals = fresh_app
     raw = originals.parent / "inbound" / "raw"
     src = raw / "doc.pdf"
     src.write_bytes(b"%PDF-1.4 ...")
-    result = process_file(src, conn=conn, originals_dir=originals)
-    assert result is None
-    assert src.exists()  # untouched
+    result = process_raw_arrival(src, conn=conn, originals_dir=originals)
+    assert result.action == "submit_to_marker"
+    assert result.document_id is not None
+    assert result.doc_id == str(result.document_id)
+    assert result.source_path == str(originals / f"{result.document_id}.pdf")
+    assert (originals / f"{result.document_id}.pdf").exists()
+    doc = load_document(conn, result.document_id)
+    assert doc is not None
+    assert doc.status == "converting"
+    assert doc.source_type == "pdf"
 
 
-def test_process_file_marks_empty_md_as_failed(
+def test_process_raw_arrival_marks_empty_md_as_failed(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
     """An empty .md still inserts a doc row (so the user can see the
     failure in the library) but flips status to 'failed'."""
-    client, conn, originals = fresh_app
+    _client, conn, originals = fresh_app
     raw = originals.parent / "inbound" / "raw"
     src = raw / "empty.md"
     src.write_text("", encoding="utf-8")
-    doc_id = process_file(src, conn=conn, originals_dir=originals)
-    assert doc_id is not None
-    doc = load_document(conn, doc_id)
+    result = process_raw_arrival(src, conn=conn, originals_dir=originals)
+    assert result.action == "ingested"
+    assert result.document_id is not None
+    doc = load_document(conn, result.document_id)
+    assert doc is not None
+    assert doc.status == "failed"
+
+
+def test_process_raw_arrival_dedups_on_content_hash(
+    fresh_app: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """Re-dropping the same bytes returns action=duplicate against the
+    same document_id — no second ingest, no second row."""
+    _client, conn, originals = fresh_app
+    raw = originals.parent / "inbound" / "raw"
+    body = "# Same\n\ncontents.\n"
+
+    src1 = raw / "first.md"
+    src1.write_text(body, encoding="utf-8")
+    first = process_raw_arrival(src1, conn=conn, originals_dir=originals)
+
+    src2 = raw / "second.md"
+    src2.write_text(body, encoding="utf-8")
+    second = process_raw_arrival(src2, conn=conn, originals_dir=originals)
+
+    assert first.action == "ingested"
+    assert second.action == "duplicate"
+    assert second.document_id == first.document_id
+    # Second drop is left in place for manual inspection
+    assert src2.exists()
+
+
+def test_process_raw_arrival_unsupported_records_failed_row(
+    fresh_app: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """Unknown extension → fail-row + action=unsupported. The user
+    sees their drop in the library so it doesn't vanish."""
+    _client, conn, originals = fresh_app
+    raw = originals.parent / "inbound" / "raw"
+    src = raw / "weird.xyz"
+    src.write_bytes(b"\x00\x01\x02")
+    result = process_raw_arrival(src, conn=conn, originals_dir=originals)
+    assert result.action == "unsupported"
+    assert result.document_id is not None
+    doc = load_document(conn, result.document_id)
     assert doc is not None
     assert doc.status == "failed"
 
@@ -202,14 +253,15 @@ def test_process_file_marks_empty_md_as_failed(
 def test_dropped_doc_round_trips_through_reader(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
-    """End-to-end: drop file → process_file → /documents/{id}/reader
+    """End-to-end: drop file → arrivals → /documents/{id}/reader
     serves the chunked document."""
     client, conn, originals = fresh_app
     raw = originals.parent / "inbound" / "raw"
     src = raw / "hello.md"
     src.write_text("# Hello\n\nThis is the body.\n", encoding="utf-8")
-    doc_id = process_file(src, conn=conn, originals_dir=originals)
-    response = client.get(f"/documents/{doc_id}/reader")
+    result = process_raw_arrival(src, conn=conn, originals_dir=originals)
+    assert result.document_id is not None
+    response = client.get(f"/documents/{result.document_id}/reader")
     assert response.status_code == 200
     assert "<html" in response.text
 
@@ -240,21 +292,20 @@ def test_dropped_doc_pin_persists_across_app_rebuild(tmp_path: Path) -> None:
     conn = _open_db()
     src = raw / "hello.md"
     src.write_text("# Hello\n\nFirst.\n\nSecond.\n", encoding="utf-8")
-    doc_id = process_file(src, conn=conn, originals_dir=originals)
-    assert doc_id is not None
+    result = process_raw_arrival(src, conn=conn, originals_dir=originals)
+    assert result.document_id is not None
     app = create_app(
         empty_reader_state(conn),
         db=conn,
         originals_dir=originals,
         inbound_raw_dir=raw,
-        enable_watcher=False,
     )
     with TestClient(app) as client:
-        client.get(f"/documents/{doc_id}/reader")  # opens; reader state points here
+        client.get(f"/documents/{result.document_id}/reader")  # opens; reader state points here
         client.post("/pin")  # pins current_position with color 1
 
     state = build_reader_state_for_document(
-        _open_db(), document_id=doc_id, warm_chunks=RESUME_WARM_CHUNKS_DEFAULT
+        _open_db(), document_id=result.document_id, warm_chunks=RESUME_WARM_CHUNKS_DEFAULT
     )
     assert state is not None
     assert state.pin_colors == {0: 1}

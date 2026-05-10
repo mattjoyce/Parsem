@@ -114,9 +114,9 @@ def _cmd_serve(args: argparse.Namespace, *, runner: Callable[..., Any]) -> int:
 
 def _cmd_add(args: argparse.Namespace) -> int:
     """`parsem add <url|file>` — drop into inbound/raw/ without going
-    through the server. The watcher (when running) will ingest it; if
-    the server isn't running, the file waits in inbound/raw/ until the
-    next startup sweep picks it up."""
+    through the server. Ductile's folderwatch on inbound/raw/ knocks
+    Parsem to ingest (ADR 0002). If ductile isn't watching, the file
+    waits in inbound/raw/ until ductile catches up."""
     settings = load_settings(args.config)
     paths = settings.paths
     ensure_library_layout(paths)

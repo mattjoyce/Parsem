@@ -49,20 +49,30 @@ def insert_document(
     status: str,
     total_chunks: int | None = None,
     failure_reason: str | None = None,
+    source_type: str = "markdown",
+    source_hash: str | None = None,
     now: datetime,
 ) -> int:
-    """Insert a documents row; return the new id."""
+    """Insert a documents row; return the new id.
+
+    `source_type` defaults to 'markdown' for back-compat with the
+    cycle-1 path; ductile-driven PDF arrivals pass 'pdf'. `source_hash`
+    is the SHA-256 of the originally-arrived bytes — populated by the
+    arrivals path so subsequent duplicate drops short-circuit (ADR 0002).
+    """
     cur = conn.execute(
         "INSERT INTO documents "
         "(title, source_type, original_path, status, failure_reason,"
-        " total_chunks, created_at, updated_at) "
-        "VALUES (?, 'markdown', ?, ?, ?, ?, ?, ?)",
+        " total_chunks, source_hash, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             title,
+            source_type,
             original_path,
             status,
             failure_reason,
             total_chunks,
+            source_hash,
             now.isoformat(),
             now.isoformat(),
         ),
@@ -71,6 +81,20 @@ def insert_document(
     assert new_id is not None  # AUTOINCREMENT always returns an id
     conn.commit()
     return new_id
+
+
+def find_document_id_by_source_hash(
+    conn: sqlite3.Connection, source_hash: str
+) -> int | None:
+    """Lookup for the arrivals dedup path (ADR 0002). Returns the
+    existing document id when a row already carries this hash, or None
+    when this is a first arrival. Hash is the SHA-256 of the
+    originally-arrived bytes (.md text or .pdf binary)."""
+    row = conn.execute(
+        "SELECT id FROM documents WHERE source_hash=? LIMIT 1",
+        (source_hash,),
+    ).fetchone()
+    return row["id"] if row else None
 
 
 def insert_chunks_and_sections(

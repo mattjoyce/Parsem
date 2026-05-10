@@ -16,7 +16,6 @@ from parsem.config import (
     resolve_paths,
 )
 
-
 # Loaden-backed config
 # ────────────────────
 

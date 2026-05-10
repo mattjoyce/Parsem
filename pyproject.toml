@@ -12,7 +12,6 @@ dependencies = [
     "pysbd>=0.3.4",
     "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.32",
-    "watchdog>=4.0",
 ]
 
 [project.optional-dependencies]
