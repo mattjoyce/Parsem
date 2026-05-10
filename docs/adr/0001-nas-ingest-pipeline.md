@@ -74,7 +74,7 @@ Three independently-shippable cycles tracked under bd `claude-mwx`:
 
 ### Deploy
 
-- **Source of truth:** `github.com/mattjoyce/Parsem` (private).
+- **Source of truth:** `github.com/mattjoyce/Parsem`.
 - **Dev → prod path:** push from Mac → `git clone`/`pull` on `/Volumes/Projects/Parsem/` (Mac mount of an unRAID share) → `rsync` into the Parsem container's bind mount.
 - **Image build:** Dockerfile to be added in cycle 1 (slim Python base + `uv` for deps). Container is stateless; only the bind mount carries data.
 
