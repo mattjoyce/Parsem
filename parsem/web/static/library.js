@@ -91,4 +91,36 @@
       openEditor(btn);
     }
   });
+
+  // URL-ingest form (claude-mwx.1) — JSON POST to /ingest. The file
+  // form posts multipart and natively redirects on 302; this one needs
+  // JS to set the correct content-type and refresh the library after
+  // the watcher has had a moment to ingest.
+  const urlForm = document.getElementById("ingest-url-form");
+  if (urlForm) {
+    urlForm.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const input = urlForm.querySelector('input[name="url"]');
+      if (!input || !input.value.trim()) return;
+      const submit = urlForm.querySelector("button[type=submit]");
+      if (submit) submit.disabled = true;
+      try {
+        const response = await fetch("/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: input.value.trim() }),
+        });
+        if (!response.ok) {
+          const detail = await response.text();
+          alert("Failed to add URL: " + detail);
+          return;
+        }
+        // Watcher needs a beat to ingest the dropped file before the
+        // library page re-renders with the new row. 800ms is empirical.
+        setTimeout(() => window.location.reload(), 800);
+      } finally {
+        if (submit) submit.disabled = false;
+      }
+    });
+  }
 })();

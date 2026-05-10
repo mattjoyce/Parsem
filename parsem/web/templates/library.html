@@ -9,8 +9,17 @@
 <main class="library-page">
   <header class="library-header">
     <h1>Library</h1>
-    <a class="library-upload-link" href="/upload">Upload</a>
   </header>
+  <section class="library-ingest" aria-label="Add document">
+    <form class="library-ingest__file" action="/ingest" method="post" enctype="multipart/form-data">
+      <input type="file" name="file" accept=".md,text/markdown" required>
+      <button type="submit">Add file</button>
+    </form>
+    <form class="library-ingest__url" id="ingest-url-form">
+      <input type="url" name="url" placeholder="https://… (URL to .md)" required>
+      <button type="submit">Add URL</button>
+    </form>
+  </section>
   {% if rows %}
   <table class="library">
     <thead>
@@ -32,7 +41,7 @@
   </table>
   {% else %}
   <p class="library-empty">
-    No documents yet. <a href="/upload">Upload</a> a Markdown file to begin.
+    No documents yet — drop a .md file or paste a URL above to begin.
   </p>
   {% endif %}
 </main>

@@ -187,10 +187,10 @@ def update_document_original_path(
     original_path: str,
     now: datetime,
 ) -> None:
-    """Patch original_path after the file has been written. Two-step
-    insert: documents row goes in first (with a placeholder path) so we
-    have an id; the file lands at `data/originals/{id}.md`; then this
-    UPDATE records the resolved path."""
+    """Patch original_path after the file is renamed into originals/.
+    The two-step pattern (insert with placeholder → write/rename file
+    → UPDATE) lives in the watcher's ingest path, where the doc id
+    has to exist before the file is renamed to `originals/<id>.md`."""
     conn.execute(
         "UPDATE documents SET original_path=?, updated_at=? WHERE id=?",
         (original_path, now.isoformat(), document_id),

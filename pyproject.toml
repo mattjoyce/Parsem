@@ -5,11 +5,13 @@ description = "Self-hosted local-first deep-reading app for Markdown documents"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115",
+    "httpx>=0.27",
     "jinja2>=3.1",
     "markdown-it-py>=3.0",
     "pysbd>=0.3.4",
     "python-multipart>=0.0.9",
     "uvicorn[standard]>=0.32",
+    "watchdog>=4.0",
 ]
 
 [project.optional-dependencies]
@@ -18,7 +20,6 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.7",
     "mypy>=1.13",
-    "httpx>=0.27",
 ]
 
 [project.scripts]

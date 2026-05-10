@@ -31,3 +31,12 @@ htmlcov/
 
 # OS
 .DS_Store
+
+# Local state
+.claude/
+MEMORY/
+review_parsem_codebase.md
+
+# NAS library content (data dirs are environment-specific; the
+# library/ subtree is created on first boot via ensure_library_layout)
+data/library/
