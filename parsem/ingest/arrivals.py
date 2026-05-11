@@ -9,18 +9,24 @@ Two functions, one per direction of the seam:
 
     * `ingested`         — `.md`; we parsed and persisted in place
     * `submit_to_marker` — `.pdf`; we inserted a converting row, moved
-                            the PDF to originals/<id>.pdf for a stable
-                            bind-mount source, and want ductile to call
-                            Marker with the returned doc_id + source_path
+                            the PDF to originals/<id>/source.pdf for a
+                            stable bind-mount source, and want ductile
+                            to call Marker with doc_id + source_path
     * `duplicate`        — content hash already in the library; no-op
     * `unsupported`      — anything else; recorded as a fail-row so the
                             user sees their drop landed and didn't take
 
 - `process_converted_arrival(path, ...)` — ductile knocks here when
   Marker drops a `<doc_id>.md` into `inbound/converted/`. We load the
-  existing converting row (filename carries the doc_id), parse the
-  markdown, link it via parse_and_persist, and persist the sidecar
-  metadata as an extraction_runs row.
+  existing converting row (filename carries the doc_id), relocate
+  Marker's cluster (`<doc_id>.md`, `<doc_id>.json`, `<doc_id>_images/`)
+  into `originals/<doc_id>/` as `document.md` / `extraction.json` /
+  `images/` — rewriting the markdown's image refs from `<doc_id>_images/`
+  to `images/` — then parse it via parse_and_persist and record the
+  sidecar metadata as an extraction_runs row.
+
+A stored document is a directory (`originals/<doc_id>/`), not a
+file-prefix cluster — see `parsem.ingest.layout`.
 
 Both functions are pure-shaped: filesystem and SQL effects only,
 deterministic given inputs. The route layer is a thin adapter — auth,
@@ -44,6 +50,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from parsem.ingest import layout
 from parsem.store.documents import (
     find_document_id_by_source_hash,
     insert_document,
@@ -168,7 +175,10 @@ def _ingest_markdown(
     )
     try:
         text = path.read_text(encoding="utf-8")
-        target = originals_dir / f"{document_id}.md"
+        layout.document_dir(originals_dir, document_id).mkdir(
+            parents=True, exist_ok=True
+        )
+        target = layout.markdown_path(originals_dir, document_id)
         path.rename(target)
         update_document_original_path(
             conn, document_id, original_path=str(target), now=now
@@ -190,10 +200,11 @@ def _stage_pdf_for_marker(
     source_hash: str,
     now: datetime,
 ) -> RawArrivalResult:
-    """Insert a converting row and move the PDF to a stable path Marker
-    can bind-mount. Cycle 3 will formalize this as 'provenance' for the
-    re-ingest UI; cycle 2 already needs the stable path so doing both at
-    once costs nothing extra."""
+    """Insert a converting row and move the PDF into the document's
+    directory as `source.pdf` — a stable path Marker can bind-mount and
+    the provenance copy cycle 3's re-ingest button will re-convert from.
+    The converted markdown lands alongside it as `document.md` once
+    `process_converted_arrival` fires."""
     title = path.stem
     document_id = insert_document(
         conn,
@@ -205,7 +216,10 @@ def _stage_pdf_for_marker(
         now=now,
     )
     try:
-        target = originals_dir / f"{document_id}.pdf"
+        layout.document_dir(originals_dir, document_id).mkdir(
+            parents=True, exist_ok=True
+        )
+        target = layout.source_path(originals_dir, document_id, path.suffix)
         path.rename(target)
         update_document_original_path(
             conn, document_id, original_path=str(target), now=now
@@ -247,7 +261,8 @@ def _record_unsupported(
         source_hash=source_hash,
         now=now,
     )
-    target = originals_dir / f"{document_id}{path.suffix}"
+    layout.document_dir(originals_dir, document_id).mkdir(parents=True, exist_ok=True)
+    target = layout.source_path(originals_dir, document_id, path.suffix)
     path.rename(target)
     update_document_original_path(
         conn, document_id, original_path=str(target), now=now
@@ -268,12 +283,14 @@ def process_converted_arrival(
 ) -> ConvertedArrivalResult:
     """Synchronous core for `/ingest/converted-arrived`. Marker writes
     `<doc_id>.md` last under its atomic-write contract, so by the time
-    ductile filewatch fires this knock the .md, sidecar JSON, and
-    images dir are all in place."""
-    if not path.exists():
-        return ConvertedArrivalResult(
-            action="failed", document_id=None, reason="file not found"
-        )
+    ductile filewatch fires this knock the `.md`, sidecar `.json`, and
+    `<doc_id>_images/` directory are all in place.
+
+    We relocate that cluster into `originals/<doc_id>/` — `document.md`,
+    `extraction.json`, `images/` — rewriting the markdown's image refs
+    from `<doc_id>_images/` to `images/` so a renderer resolves them
+    against the reader page URL (served by GET /documents/{id}/images/).
+    """
     if path.suffix.lower() != ".md":
         return ConvertedArrivalResult(
             action="failed", document_id=None,
@@ -294,17 +311,36 @@ def process_converted_arrival(
             reason="no document row for this doc_id",
         )
     if doc.status == "ready":
-        # Retry under contention (ductile filewatch fired twice).
-        # The doc is already ingested; nothing to do.
+        # Retry under contention (ductile filewatch fired twice). The
+        # doc is already ingested — and we may have already moved the
+        # staging .md out from under this knock — so this check has to
+        # come before the file-existence one.
         return ConvertedArrivalResult(action="duplicate", document_id=document_id)
+    if not path.exists():
+        return ConvertedArrivalResult(
+            action="failed", document_id=document_id, reason="file not found"
+        )
 
     now = now_factory()
     try:
-        text = path.read_text(encoding="utf-8")
+        raw_text = path.read_text(encoding="utf-8")
+        # Marker emits image refs as `<doc_id>_images/<file>`; once the
+        # dir lands at `originals/<doc_id>/images/` the refs need to say
+        # `images/<file>` so the reader's <img src> resolves under
+        # /documents/{id}/images/. Specific enough a string that a blind
+        # replace is safe.
+        markdown_text = raw_text.replace(
+            f"{document_id}_{layout.IMAGES_DIRNAME}/", f"{layout.IMAGES_DIRNAME}/"
+        )
         # Marker's atomic-write contract: <doc_id>.md is renamed last,
-        # so by here the sidecar is already in place. Tolerate missing
-        # sidecar though — Marker is still allowed to win without one.
+        # so by here the sidecar is already in place. Tolerate a missing
+        # sidecar though — Marker is allowed to win without one.
         sidecar = _read_sidecar(path)
+        _relocate_marker_cluster(path, originals_dir, document_id, markdown_text)
+        new_md_path = layout.markdown_path(originals_dir, document_id)
+        update_document_original_path(
+            conn, document_id, original_path=str(new_md_path), now=now
+        )
         if sidecar is not None:
             insert_extraction_run(
                 conn,
@@ -320,7 +356,9 @@ def process_converted_arrival(
                 },
                 now=now,
             )
-        parse_and_persist(conn, document_id=document_id, text=text, now=now)
+        parse_and_persist(
+            conn, document_id=document_id, text=markdown_text, now=now
+        )
     except Exception as exc:
         _LOG.exception("arrivals: converted ingest failed for %s", path)
         mark_document_failed(
@@ -331,6 +369,34 @@ def process_converted_arrival(
         )
 
     return ConvertedArrivalResult(action="ingested", document_id=document_id)
+
+
+def _relocate_marker_cluster(
+    md_path: Path,
+    originals_dir: Path,
+    document_id: int,
+    markdown_text: str,
+) -> None:
+    """Move Marker's `inbound/converted/` output into the document's
+    directory: `<doc_id>_images/` → `images/`, `<doc_id>.json` →
+    `extraction.json`, and the (ref-rewritten) markdown → `document.md`.
+    The staging `.md` is removed last. `originals/<doc_id>/` already
+    exists from the PDF-staging step (it holds `source.pdf`)."""
+    doc_dir = layout.document_dir(originals_dir, document_id)
+    doc_dir.mkdir(parents=True, exist_ok=True)
+
+    staged_images = md_path.parent / f"{document_id}_{layout.IMAGES_DIRNAME}"
+    if staged_images.is_dir():
+        staged_images.rename(layout.images_dir(originals_dir, document_id))
+
+    staged_sidecar = md_path.with_suffix(".json")
+    if staged_sidecar.exists():
+        staged_sidecar.rename(layout.extraction_json_path(originals_dir, document_id))
+
+    layout.markdown_path(originals_dir, document_id).write_text(
+        markdown_text, encoding="utf-8"
+    )
+    md_path.unlink(missing_ok=True)
 
 
 def _doc_id_from_filename(path: Path) -> int | None:
@@ -344,9 +410,9 @@ def _doc_id_from_filename(path: Path) -> int | None:
 
 
 def _read_sidecar(md_path: Path) -> dict[str, object] | None:
-    """Look for `<doc_id>.json` next to the .md. Returns the parsed
-    dict or None if absent / unreadable. Sidecar is metadata only;
-    its absence is not fatal."""
+    """Look for `<doc_id>.json` next to the .md in `inbound/converted/`.
+    Returns the parsed dict or None if absent / unreadable. Sidecar is
+    metadata only; its absence is not fatal."""
     sidecar_path = md_path.with_suffix(".json")
     if not sidecar_path.exists():
         return None

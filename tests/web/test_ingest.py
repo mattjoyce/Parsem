@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from parsem.cli import RESUME_WARM_CHUNKS_DEFAULT
+from parsem.ingest import layout
 from parsem.ingest.arrivals import process_raw_arrival
 from parsem.ingest.url_fetch import FetchedFile
 from parsem.store.db import connect, migrate
@@ -156,7 +157,7 @@ def test_process_raw_arrival_ingests_md_and_moves_to_originals(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
     """Drop a .md into raw/, call the arrivals core: doc row inserted,
-    chunks parsed, file moved to originals/<doc_id>.md, action=ingested."""
+    chunks parsed, file moved to originals/<id>/document.md, action=ingested."""
     _client, conn, originals = fresh_app
     raw = originals.parent / "inbound" / "raw"
     src = raw / "drop.md"
@@ -165,7 +166,7 @@ def test_process_raw_arrival_ingests_md_and_moves_to_originals(
     assert result.action == "ingested"
     assert result.document_id is not None
     assert not src.exists()  # moved
-    assert (originals / f"{result.document_id}.md").exists()
+    assert layout.markdown_path(originals, result.document_id).exists()
     doc = load_document(conn, result.document_id)
     assert doc is not None
     assert doc.title == "drop"
@@ -174,8 +175,8 @@ def test_process_raw_arrival_ingests_md_and_moves_to_originals(
 def test_process_raw_arrival_pdf_stages_for_marker(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
-    """A .pdf gets a converting row, moves to originals/<id>.pdf, and
-    returns submit_to_marker so ductile knows to call Marker."""
+    """A .pdf gets a converting row, moves to originals/<id>/source.pdf,
+    and returns submit_to_marker so ductile knows to call Marker."""
     _client, conn, originals = fresh_app
     raw = originals.parent / "inbound" / "raw"
     src = raw / "doc.pdf"
@@ -184,8 +185,9 @@ def test_process_raw_arrival_pdf_stages_for_marker(
     assert result.action == "submit_to_marker"
     assert result.document_id is not None
     assert result.doc_id == str(result.document_id)
-    assert result.source_path == str(originals / f"{result.document_id}.pdf")
-    assert (originals / f"{result.document_id}.pdf").exists()
+    expected_source = layout.source_path(originals, result.document_id, ".pdf")
+    assert result.source_path == str(expected_source)
+    assert expected_source.exists()
     doc = load_document(conn, result.document_id)
     assert doc is not None
     assert doc.status == "converting"

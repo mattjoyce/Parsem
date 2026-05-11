@@ -12,6 +12,7 @@ fragment rendering on rename, file re-read on retry-parse).
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,6 +21,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
+from parsem.ingest import layout
 from parsem.store.documents import (
     delete_document,
     delete_document_chunks_and_sections,
@@ -69,7 +71,11 @@ def post_delete(document_id: int, request: Request) -> RedirectResponse:
         raise HTTPException(status_code=404, detail="Document not found")
 
     originals_dir: Path = request.app.state.originals_dir
-    (originals_dir / f"{document_id}.md").unlink(missing_ok=True)
+    # A document is a directory (originals/<id>/) — wipe the whole thing
+    # (markdown, source.pdf, extraction.json, images/). ignore_errors so
+    # the welcome doc (no dir under originals/) and partial states don't
+    # block the delete.
+    shutil.rmtree(layout.document_dir(originals_dir, document_id), ignore_errors=True)
 
     if request.app.state.reader.document_id == document_id:
         request.app.state.reader = empty_reader_state(conn)
@@ -128,7 +134,7 @@ def post_retry_parse(document_id: int, request: Request) -> RedirectResponse:
         raise HTTPException(status_code=404, detail="Document not found")
 
     originals_dir: Path = request.app.state.originals_dir
-    file_path = originals_dir / f"{document_id}.md"
+    file_path = layout.markdown_path(originals_dir, document_id)
     now = datetime.now(UTC)
     if not file_path.exists():
         mark_document_failed(

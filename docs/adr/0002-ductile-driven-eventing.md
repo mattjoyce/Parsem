@@ -35,8 +35,8 @@ The endpoint reads the file, hashes its bytes for dedup, and dispatches by exten
 
 | `action` | When | Side effects | Response fields |
 |---|---|---|---|
-| `ingested` | `.md` content, new hash | Parses, moves to `originals/<doc_id>.md`, status=ready | `document_id` |
-| `submit_to_marker` | `.pdf` content, new hash | Inserts doc (status=converting), moves to `originals/<doc_id>.pdf` | `document_id`, `doc_id` (string), `source_path` |
+| `ingested` | `.md` content, new hash | Parses, moves to `originals/<doc_id>/document.md`, status=ready | `document_id` |
+| `submit_to_marker` | `.pdf` content, new hash | Inserts doc (status=converting), moves to `originals/<doc_id>/source.pdf` | `document_id`, `doc_id` (string), `source_path` |
 | `duplicate` | Hash already in db | None | `document_id` (the existing one) |
 | `unsupported` | Other extension | Inserts a fail-row with reason | `document_id` |
 
@@ -44,7 +44,7 @@ The ductile DSL reads `action` and routes accordingly. `submit_to_marker` is the
 
 ### `/ingest/converted-arrived` — finish the converting doc
 
-The filename is `<doc_id>.md`. The endpoint loads that document row (must exist in `status=converting`), reads the markdown, calls `parse_and_persist`, flips status to `ready`. The sidecar `<doc_id>.json` is read for `marker_version`, `duration_seconds`, `image_count`, and a row is written to `extraction_runs` (schema v3 already migrated).
+The filename is `<doc_id>.md`. The endpoint loads that document row (must exist in `status=converting`), then relocates Marker's `inbound/converted/` cluster into the document directory: `<doc_id>_images/` → `originals/<doc_id>/images/`, `<doc_id>.json` → `originals/<doc_id>/extraction.json`, and the markdown — with its image refs rewritten from `<doc_id>_images/` to `images/` — → `originals/<doc_id>/document.md`. It then calls `parse_and_persist` on the rewritten text, flips status to `ready`, and writes an `extraction_runs` row from the sidecar (`marker_version`, `duration_seconds`, `image_count`; schema v3 already migrated). The rewritten refs let the reader's `<img src="images/<f>">` resolve under `GET /documents/{id}/images/`.
 
 ### Ductile pipelines (other side of the seam)
 

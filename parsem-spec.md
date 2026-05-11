@@ -639,7 +639,7 @@ Common failures:
 
 ### 17.3 Images
 
-Block-level images — a paragraph whose only content is `![alt](url)` — become their own chunk (claude-axx.6), revealed as a single unit with image-shaped read cost (`ReadingRules.image_seconds`, default 6s; `None` derives the cost from the alt text's words at prose WPM). Inline images embedded in prose render normally inside their containing chunk. The image URL is rendered as-is — no local caching in this phase; renderers that resolve relative paths will pick up images Marker extracted into the document's sibling directory. (Spec original skipped image syntax silently; superseded.)
+Block-level images — a paragraph whose only content is `![alt](url)` — become their own chunk (claude-axx.6), revealed as a single unit with image-shaped read cost (`ReadingRules.image_seconds`, default 6s; `None` derives the cost from the alt text's words at prose WPM). Inline images embedded in prose render normally inside their containing chunk. For converted PDFs, Marker's extracted figures land in `originals/<doc_id>/images/` and the markdown's refs are rewritten to `images/<file>`, served by `GET /documents/{id}/images/{path}` — so the reader resolves them against the page URL. External image URLs are rendered as-is (no local caching in this phase). (Spec original skipped image syntax silently; superseded.)
 
 ---
 

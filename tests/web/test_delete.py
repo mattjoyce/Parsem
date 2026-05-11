@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from parsem.ingest import layout
 from parsem.store.db import connect, migrate
 from parsem.store.documents import (
     insert_chunks_and_sections,
@@ -170,24 +171,26 @@ def test_delete_cascades_to_pins(
     assert remaining == 0
 
 
-def test_delete_unlinks_original_file(
+def test_delete_wipes_the_document_directory(
     app_ctx: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
     client, conn, originals = app_ctx
     doc_id = _seed_doc(conn)
-    original = originals / f"{doc_id}.md"
-    original.write_text("# Hello", encoding="utf-8")
-    assert original.exists()
+    doc_dir = layout.document_dir(originals, doc_id)
+    (doc_dir / layout.IMAGES_DIRNAME).mkdir(parents=True)
+    layout.markdown_path(originals, doc_id).write_text("# Hello", encoding="utf-8")
+    (doc_dir / layout.IMAGES_DIRNAME / "fig.jpeg").write_bytes(b"\xff\xd8\xff")
+    assert doc_dir.exists()
     client.post(f"/documents/{doc_id}/delete")
-    assert not original.exists()
+    assert not doc_dir.exists()
 
 
-def test_delete_is_idempotent_when_original_missing(
+def test_delete_is_idempotent_when_document_dir_missing(
     app_ctx: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
     client, conn, originals = app_ctx
     doc_id = _seed_doc(conn)
-    assert not (originals / f"{doc_id}.md").exists()
+    assert not layout.document_dir(originals, doc_id).exists()
     response = client.post(f"/documents/{doc_id}/delete", follow_redirects=False)
     assert response.status_code == 302
 

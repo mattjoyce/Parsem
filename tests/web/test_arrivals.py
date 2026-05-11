@@ -18,6 +18,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from parsem.config import IngestSettings
+from parsem.ingest import layout
 from parsem.ingest.arrivals import process_converted_arrival
 from parsem.store.db import connect, migrate
 from parsem.store.documents import load_document
@@ -84,7 +85,7 @@ def test_raw_arrived_md_returns_ingested(
     body = response.json()
     assert body["action"] == "ingested"
     assert body["document_id"] is not None
-    assert (originals / f"{body['document_id']}.md").exists()
+    assert layout.markdown_path(originals, body["document_id"]).exists()
 
 
 def test_raw_arrived_pdf_returns_submit_to_marker(
@@ -98,7 +99,9 @@ def test_raw_arrived_pdf_returns_submit_to_marker(
     body = response.json()
     assert body["action"] == "submit_to_marker"
     assert body["doc_id"] == str(body["document_id"])
-    assert body["source_path"] == str(originals / f"{body['document_id']}.pdf")
+    expected_source = layout.source_path(originals, body["document_id"], ".pdf")
+    assert body["source_path"] == str(expected_source)
+    assert expected_source.exists()
     doc = load_document(conn, body["document_id"])
     assert doc is not None
     assert doc.status == "converting"
@@ -195,24 +198,49 @@ def test_arrivals_with_token_accepts_correct_token(
 
 
 def _drop_marker_output(
-    converted_dir: Path, *, doc_id: int, md_text: str, sidecar: dict
+    converted_dir: Path,
+    *,
+    doc_id: int,
+    md_text: str,
+    sidecar: dict,
+    images: dict[str, bytes] | None = None,
 ) -> Path:
-    """Simulate Marker's atomic-write contract: write sidecar JSON
-    first, then the .md last (in real life Marker also writes an
-    images dir; we skip that here since arrivals doesn't read it)."""
-    sidecar_path = converted_dir / f"{doc_id}.json"
-    sidecar_path.write_text(json.dumps(sidecar), encoding="utf-8")
+    """Simulate Marker's output cluster under its atomic-write contract:
+    images dir first, sidecar JSON next, the .md last. `images` maps a
+    filename to bytes; the dir is named `<doc_id>_images/` to match the
+    Marker contract (image refs in the markdown point at that name)."""
+    if images:
+        img_dir = converted_dir / f"{doc_id}_images"
+        img_dir.mkdir()
+        for name, data in images.items():
+            (img_dir / name).write_bytes(data)
+    (converted_dir / f"{doc_id}.json").write_text(json.dumps(sidecar), encoding="utf-8")
     md_path = converted_dir / f"{doc_id}.md"
     md_path.write_text(md_text, encoding="utf-8")
     return md_path
+
+
+def _marker_sidecar(doc_id: int, **overrides: object) -> dict:
+    base = {
+        "doc_id": str(doc_id),
+        "status": "ready",
+        "source": "/input/in.pdf",
+        "output_md": f"/output/{doc_id}.md",
+        "marker_version": "1.10.2",
+        "duration_seconds": 599.5,
+        "image_count": 0,
+        "completed_at": "2026-05-10T10:25:55+00:00",
+    }
+    base.update(overrides)
+    return base
 
 
 def test_converted_arrived_completes_pdf_round_trip(
     app_open: tuple[TestClient, sqlite3.Connection, Path, Path, Path],
 ) -> None:
     """Full PDF flow: raw-arrived stages, marker drop, converted-arrived
-    flips to ready and writes an extraction_runs row."""
-    client, conn, _originals, raw, converted = app_open
+    relocates the cluster into originals/<id>/ and flips to ready."""
+    client, conn, originals, raw, converted = app_open
     pdf = raw / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4\n...")
     submit_resp = client.post("/ingest/raw-arrived", json={"path": str(pdf)}).json()
@@ -223,16 +251,7 @@ def test_converted_arrived_completes_pdf_round_trip(
         converted,
         doc_id=doc_id,
         md_text="# Paper\n\nConverted body.\n",
-        sidecar={
-            "doc_id": str(doc_id),
-            "status": "ready",
-            "source": "/input/in.pdf",
-            "output_md": f"/output/{doc_id}.md",
-            "marker_version": "1.10.2",
-            "duration_seconds": 599.5,
-            "image_count": 0,
-            "completed_at": "2026-05-10T10:25:55+00:00",
-        },
+        sidecar=_marker_sidecar(doc_id),
     )
     response = client.post(
         "/ingest/converted-arrived", json={"path": str(md_path)}
@@ -245,6 +264,12 @@ def test_converted_arrived_completes_pdf_round_trip(
     assert doc is not None
     assert doc.status == "ready"
 
+    # Cluster relocated into originals/<id>/; staging .md drained.
+    assert layout.markdown_path(originals, doc_id).exists()
+    assert layout.extraction_json_path(originals, doc_id).exists()
+    assert layout.source_path(originals, doc_id, ".pdf").exists()  # from staging
+    assert not md_path.exists()
+
     # extraction_runs row carries marker_version + duration
     rows = conn.execute(
         "SELECT extractor_name, extractor_version, params_json"
@@ -256,6 +281,84 @@ def test_converted_arrived_completes_pdf_round_trip(
     assert rows[0]["extractor_version"] == "1.10.2"
     params = json.loads(rows[0]["params_json"])
     assert params["duration_seconds"] == 599.5
+
+
+def test_converted_arrived_relocates_images_and_rewrites_refs(
+    app_open: tuple[TestClient, sqlite3.Connection, Path, Path, Path],
+) -> None:
+    """Marker's <doc_id>_images/ lands at originals/<id>/images/, and the
+    markdown's `![](<doc_id>_images/x.jpeg)` refs are rewritten to
+    `images/x.jpeg` (and persisted that way)."""
+    client, conn, originals, raw, converted = app_open
+    pdf = raw / "figpaper.pdf"
+    pdf.write_bytes(b"%PDF...")
+    doc_id = client.post("/ingest/raw-arrived", json={"path": str(pdf)}).json()[
+        "document_id"
+    ]
+    md_text = (
+        f"# Figures\n\n"
+        f"![Figure 1]({doc_id}_images/_page_0_Figure_1.jpeg)\n\n"
+        f"Some prose between figures.\n\n"
+        f"![Figure 2]({doc_id}_images/_page_2_Figure_3.jpeg)\n"
+    )
+    md_path = _drop_marker_output(
+        converted,
+        doc_id=doc_id,
+        md_text=md_text,
+        sidecar=_marker_sidecar(doc_id, image_count=2),
+        images={
+            "_page_0_Figure_1.jpeg": b"\xff\xd8\xff\xe0fakejpeg1",
+            "_page_2_Figure_3.jpeg": b"\xff\xd8\xff\xe0fakejpeg2",
+        },
+    )
+    client.post("/ingest/converted-arrived", json={"path": str(md_path)})
+
+    images_dir = layout.images_dir(originals, doc_id)
+    assert (images_dir / "_page_0_Figure_1.jpeg").read_bytes().startswith(b"\xff\xd8")
+    assert (images_dir / "_page_2_Figure_3.jpeg").exists()
+    assert not (converted / f"{doc_id}_images").exists()  # moved, not copied
+
+    # On-disk markdown and the persisted chunk text both carry rewritten refs.
+    on_disk = layout.markdown_path(originals, doc_id).read_text(encoding="utf-8")
+    assert f"{doc_id}_images/" not in on_disk
+    assert "images/_page_0_Figure_1.jpeg" in on_disk
+    chunk_texts = " ".join(
+        r["text"] for r in conn.execute(
+            "SELECT text FROM chunks WHERE document_id=?", (doc_id,)
+        ).fetchall()
+    )
+    assert f"{doc_id}_images/" not in chunk_texts
+    assert "images/_page_0_Figure_1.jpeg" in chunk_texts
+
+
+def test_get_document_image_serves_an_extracted_figure(
+    app_open: tuple[TestClient, sqlite3.Connection, Path, Path, Path],
+) -> None:
+    client, _conn, _originals, raw, converted = app_open
+    pdf = raw / "p.pdf"
+    pdf.write_bytes(b"%PDF...")
+    doc_id = client.post("/ingest/raw-arrived", json={"path": str(pdf)}).json()[
+        "document_id"
+    ]
+    md_path = _drop_marker_output(
+        converted,
+        doc_id=doc_id,
+        md_text=f"![fig]({doc_id}_images/f.jpeg)\n",
+        sidecar=_marker_sidecar(doc_id, image_count=1),
+        images={"f.jpeg": b"\xff\xd8\xff\xe0imagedata"},
+    )
+    client.post("/ingest/converted-arrived", json={"path": str(md_path)})
+
+    ok = client.get(f"/documents/{doc_id}/images/f.jpeg")
+    assert ok.status_code == 200
+    assert ok.content == b"\xff\xd8\xff\xe0imagedata"
+
+    assert client.get(f"/documents/{doc_id}/images/missing.jpeg").status_code == 404
+    assert client.get("/documents/999/images/f.jpeg").status_code == 404
+    # Traversal attempt — encoded ../ must not escape the images dir.
+    assert client.get(
+        f"/documents/{doc_id}/images/..%2F..%2Fsource.pdf"
+    ).status_code == 404
 
 
 def test_converted_arrived_missing_doc_returns_404_shape(

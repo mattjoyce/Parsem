@@ -27,11 +27,17 @@ Parsem needs to ingest both Markdown and PDF documents from URLs, file uploads, 
 /mnt/user/Library/parsem-library/
 ├── inbound/
 │   ├── raw/                      # drop zone — web upload, manual drop, URL fetch
-│   └── converted/                # Marker writes here
-└── originals/                    # canonical, post-ingest store
-    ├── <doc_id>.md               # always present
-    └── <doc_id>.pdf              # present if originally a PDF (cycle 3)
+│   └── converted/                # Marker writes here (staging; relocated on ingest)
+└── originals/                    # canonical, post-ingest store — one dir per document
+    └── <doc_id>/
+        ├── document.md           # always present — the markdown the reader chunks
+        ├── source.pdf            # present when the doc came from a PDF (the bind-mount
+        │                           source Marker reads + cycle 3's re-convert source)
+        ├── extraction.json       # Marker's sidecar metadata, when converted
+        └── images/               # extracted figures; document.md refs them as images/<f>
 ```
+
+A document is a *directory*, not a `<doc_id>`-prefixed file cluster (revised — claude-5h0): deleting or moving a document is one `rm -rf` / `mv`; the markdown↔assets relationship is structural; a portable bundle is `tar -C originals <doc_id>` away. The image-serving route `GET /documents/{id}/images/{path}` maps to `originals/<doc_id>/images/{path}`. (The welcome doc is the exception — seeded from the repo's `data/welcome.md`, it has no directory under `originals/`.)
 
 ### Ingest flow
 
@@ -42,7 +48,7 @@ Three entry points converge on `inbound/raw/`:
 3. **CLI** — `parsem add <url|file>` is the same code path as the web form (or writes directly to `inbound/raw/`).
 
 A filesystem-watcher on `inbound/raw/` is the unifying mechanism. On detection:
-- `.md` → ingest in place, then move to `originals/<doc_id>.md`.
+- `.md` → ingest in place, then move to `originals/<doc_id>/document.md`.
 - `.pdf` → call the `ductile-marker` plugin (HTTP) with the input path; the plugin spawns a transient `docker run --rm --gpus all marker:latest …` per the `claude-08g` PRD; await output in `inbound/converted/`.
 
 ### Marker trigger — monitor only
@@ -85,7 +91,7 @@ Three independently-shippable cycles tracked under bd `claude-mwx`:
 - Three input modes from one pipeline. New input methods (e.g. email-to-Parsem via Ductile) plug in by writing to `inbound/raw/`.
 - Stateless container is safe to restart, redeploy, or scale; bind mount is the only contract.
 - Marker can fail or be down without Parsem breaking — `inbound/raw/` just queues up, and the monitor will catch up when Marker recovers.
-- `originals/<doc_id>.pdf` (cycle 3) preserves the source so a Marker upgrade lets us re-convert without re-fetching.
+- `originals/<doc_id>/source.pdf` preserves the source so a Marker upgrade lets us re-convert without re-fetching (cycle 3 adds the re-convert button; the file is already in place from cycle 2).
 
 ### Negative / risks
 

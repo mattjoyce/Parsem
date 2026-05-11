@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from parsem.ingest import layout
 from parsem.store.db import connect, migrate
 from parsem.store.documents import insert_document, load_document
 from parsem.web.app import create_app
@@ -51,7 +52,8 @@ def _seed_failed(
         failure_reason="Original parse failed.",
         now=T0,
     )
-    file_path = originals / f"{doc_id}.md"
+    file_path = layout.markdown_path(originals, doc_id)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(f"# Heading\n\n{body}\n", encoding="utf-8")
     conn.execute(
         "UPDATE documents SET original_path=? WHERE id=?",
@@ -130,7 +132,7 @@ def test_retry_with_empty_markdown_marks_failed_with_empty_reason(
 ) -> None:
     client, conn, originals = app_ctx
     doc_id = _seed_failed(conn, originals)
-    (originals / f"{doc_id}.md").write_text("   \n", encoding="utf-8")
+    layout.markdown_path(originals, doc_id).write_text("   \n", encoding="utf-8")
     client.post(f"/documents/{doc_id}/retry-parse")
     doc = load_document(conn, doc_id)
     assert doc is not None
@@ -143,7 +145,7 @@ def test_retry_when_original_file_missing_marks_failed(
 ) -> None:
     client, conn, originals = app_ctx
     doc_id = _seed_failed(conn, originals)
-    (originals / f"{doc_id}.md").unlink()
+    layout.markdown_path(originals, doc_id).unlink()
     client.post(f"/documents/{doc_id}/retry-parse")
     doc = load_document(conn, doc_id)
     assert doc is not None
@@ -225,7 +227,8 @@ def _seed_ready_with_state(
         status="failed",
         now=T0,
     )
-    file_path = originals / f"{doc_id}.md"
+    file_path = layout.markdown_path(originals, doc_id)
+    file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(body, encoding="utf-8")
     conn.execute(
         "UPDATE documents SET original_path=? WHERE id=?",

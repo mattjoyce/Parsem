@@ -19,6 +19,7 @@ from fastapi.templating import Jinja2Templates
 from parsem.config import IngestSettings
 from parsem.ingest.url_fetch import DEFAULT_MAX_BYTES, DEFAULT_TIMEOUT_SECONDS
 from parsem.web.routes.arrivals import router as arrivals_router
+from parsem.web.routes.assets import router as assets_router
 from parsem.web.routes.ingest import router as ingest_router
 from parsem.web.routes.library import router as library_router
 from parsem.web.routes.reader import router as reader_router
@@ -62,6 +63,7 @@ def create_app(
     app.include_router(reader_router)
     app.include_router(ingest_router)
     app.include_router(arrivals_router)
+    app.include_router(assets_router)
     app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
     @app.get("/")
