@@ -8,6 +8,7 @@ pieces. Phase 1 keeps preprocessing in-memory (not persisted).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -22,6 +23,12 @@ class ReadingRules:
     `heading_cost="normal"` matches today's chunker, which counts heading
     text against the budget at prose WPM. `"zero"` is available for
     strategies that want headings to be free.
+
+    `image_seconds` is the read cost of a block-level image (claude-axx.6):
+    a float gives every image a fixed cost (default 6s — long enough to
+    register, short enough not to dominate the budget); `None` derives the
+    cost from the alt text's word count at prose WPM (so a richly-captioned
+    image costs more than a bare one, and `![](url)` costs ~0s).
     """
 
     prose_wpm: int = 220
@@ -29,11 +36,17 @@ class ReadingRules:
     budget_seconds: float = 30.0
     heading_cost: Literal["normal", "zero"] = "normal"
     wpm_user_scaling: float = 1.0
+    image_seconds: float | None = 6.0
 
 
 _STRUCTURAL_ATOMIC_KINDS = frozenset({
-    "code_block", "list_run", "list_item", "blockquote", "table", "horizontal_rule",
+    "code_block", "list_run", "list_item", "blockquote", "table",
+    "horizontal_rule", "image",
 })
+
+# Captures the alt text from `![alt](url)`. Used only when
+# ReadingRules.image_seconds is None (derive cost from alt words).
+_IMAGE_ALT_RE = re.compile(r"!\[([^\]]*)\]")
 
 
 @dataclass(frozen=True)
@@ -50,6 +63,7 @@ class PreprocessedPiece:
     is_list: bool
     is_list_run: bool
     is_horizontal_rule: bool
+    is_image: bool
     is_structural_atomic: bool
     is_colon_terminated: bool
 
@@ -72,10 +86,16 @@ def _preprocess(piece: AtomicPiece, rules: ReadingRules) -> PreprocessedPiece:
     is_list_item = piece.kind == "list_item"
     is_list = is_list_run or is_list_item
     is_horizontal_rule = piece.kind == "horizontal_rule"
+    is_image = piece.kind == "image"
     is_structural_atomic = piece.kind in _STRUCTURAL_ATOMIC_KINDS
-    # Don't ask "does '---' end with ':'?" — HR is purely visual.
+    # Don't ask "does '---' end with ':'?" — HR and image are purely
+    # visual; neither participates in colon-lead-in detection on its
+    # own side (a colon-terminated *previous* paragraph can still
+    # absorb an image — that's the previous chunk's flag, not this one).
     is_colon_terminated = (
-        not is_horizontal_rule and piece.text_snapshot.rstrip().endswith(":")
+        not is_horizontal_rule
+        and not is_image
+        and piece.text_snapshot.rstrip().endswith(":")
     )
 
     if is_heading and rules.heading_cost == "zero":
@@ -84,6 +104,8 @@ def _preprocess(piece: AtomicPiece, rules: ReadingRules) -> PreprocessedPiece:
         # HR is a visual break with no prose to read. Zero cost so it
         # never consumes the prose budget.
         read_seconds = 0.0
+    elif is_image:
+        read_seconds = _image_read_seconds(piece.text_snapshot, rules)
     else:
         wpm = rules.code_wpm if is_code else rules.prose_wpm
         effective_wpm = wpm * rules.wpm_user_scaling
@@ -100,6 +122,19 @@ def _preprocess(piece: AtomicPiece, rules: ReadingRules) -> PreprocessedPiece:
         is_list=is_list,
         is_list_run=is_list_run,
         is_horizontal_rule=is_horizontal_rule,
+        is_image=is_image,
         is_structural_atomic=is_structural_atomic,
         is_colon_terminated=is_colon_terminated,
     )
+
+
+def _image_read_seconds(text_snapshot: str, rules: ReadingRules) -> float:
+    """Read cost for a block-level image. Fixed when
+    `rules.image_seconds` is a float; otherwise the alt text's words at
+    prose WPM (a captionless `![](url)` costs ~0s, a described one more)."""
+    if rules.image_seconds is not None:
+        return rules.image_seconds
+    match = _IMAGE_ALT_RE.search(text_snapshot)
+    alt_words = len(match.group(1).split()) if match else 0
+    effective_wpm = rules.prose_wpm * rules.wpm_user_scaling
+    return 0.0 if effective_wpm <= 0 else alt_words / effective_wpm * 60

@@ -383,7 +383,7 @@ materialize(plan, revision, pieces, rules) → ChunkRecord[]
 The default strategy is `current_reading_time` (v1.0.0), which reproduces the historical chunker behaviour on the new substrate. A `ChunkingRuleset` packages four rule groups:
 
 - `AtomicRules` — atomicity decisions used *before* planning: `paragraph_atomicity` (sentence | paragraph), `list_atomicity` (item | run), code/table/blockquote atomic at block grain.
-- `ReadingRules` — `prose_wpm`, `code_wpm`, `budget_seconds`, `heading_cost` (normal | zero), `wpm_user_scaling`.
+- `ReadingRules` — `prose_wpm`, `code_wpm`, `budget_seconds`, `heading_cost` (normal | zero), `wpm_user_scaling`, `image_seconds` (float = fixed cost per block image, default 6s; `None` = derive from alt-text words at prose WPM).
 - `StructuralRules` — `heading_attachment`, `code_handling`, `list_handling`, `list_lead_in` (none | colon_previous_paragraph), `table_handling`, `blockquote_handling`.
 - `MaterializationRules` — `require_contiguous_chunks` (Phase 1 always true), `preserve_source_text_when_contiguous`.
 
@@ -407,7 +407,8 @@ A heading chunk **absorbs forward** sentences from the body following it, up to 
 - **Lists**: each item is one chunk when `chunking.list_handling = item`. When `block` (default — Parsem-ew8), the whole list is one chunk; when `prose`, list items are joined and packed like prose.
 - **Blockquotes** are one chunk regardless of length.
 - **Tables** are one chunk regardless of length.
-- **Horizontal rules**, **image syntax**, blank lines are not chunked (skipped during chunking).
+- **Block-level images** (a paragraph whose only content is `![alt](url)`) become their own chunk with image-shaped read cost (`ReadingRules.image_seconds`, default 6s). Inline images inside prose stay part of their containing chunk and render normally.
+- **Horizontal rules** and blank lines are not chunked (skipped during chunking).
 - **Colon-terminated lead-in absorption** (Parsem-5lx): when a paragraph chunk's trimmed text ends with `:` AND the next blocks form a `list_item` run, the paragraph is absorbed into the merged list chunk (text prepended, `lead_token_type` stays `list_item`). The lead-in and the enumeration it introduces read as one unit. Behind `chunking.absorb_colon_lead_in` (default `true`).
 
 ### 11.4 Reading time estimation
@@ -638,7 +639,7 @@ Common failures:
 
 ### 17.3 Images
 
-Markdown image syntax is **skipped silently** during chunking. No placeholder, no warning. (Spec original used `[Image omitted]` — dropped to keep the reading surface clean. Future image support will reintroduce.)
+Block-level images — a paragraph whose only content is `![alt](url)` — become their own chunk (claude-axx.6), revealed as a single unit with image-shaped read cost (`ReadingRules.image_seconds`, default 6s; `None` derives the cost from the alt text's words at prose WPM). Inline images embedded in prose render normally inside their containing chunk. The image URL is rendered as-is — no local caching in this phase; renderers that resolve relative paths will pick up images Marker extracted into the document's sibling directory. (Spec original skipped image syntax silently; superseded.)
 
 ---
 
@@ -808,7 +809,7 @@ CREATE TABLE chunks (
   source_offset_start INTEGER NOT NULL,          -- byte offset into original Markdown
   source_offset_end INTEGER NOT NULL,
   text TEXT NOT NULL,                            -- denormalised cache
-  lead_token_type TEXT NOT NULL,                 -- heading | paragraph | list_item | code | blockquote | table
+  lead_token_type TEXT NOT NULL,                 -- heading | paragraph | list_item | code | blockquote | table | horizontal_rule | image
   lead_heading_level INTEGER,                    -- 1-6 or NULL
   section_id INTEGER,
   estimated_read_seconds REAL NOT NULL,

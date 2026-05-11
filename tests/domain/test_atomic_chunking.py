@@ -25,7 +25,11 @@ from parsem.domain.materialize import (
     derive_sections,
     materialize_chunks,
 )
-from parsem.domain.preprocessed import PreprocessedPiece, preprocess_pieces
+from parsem.domain.preprocessed import (
+    PreprocessedPiece,
+    ReadingRules,
+    preprocess_pieces,
+)
 from parsem.domain.strategies import ChunkingRuleset, ChunkPlan, validate_chunk_plan
 from parsem.domain.strategies.current_reading_time import CurrentReadingTimeStrategy
 from parsem.parse.line_index import LineIndex
@@ -305,6 +309,84 @@ def test_colon_lead_in_does_not_absorb_into_horizontal_rule() -> None:
     _, _, _, chunks, _ = _run(text)
     leads = [c.lead_token_type for c in chunks]
     assert "horizontal_rule" not in leads
+
+
+# --- block-level images (claude-axx.6) ------------------------------------
+
+
+def test_block_image_is_its_own_piece_and_chunk() -> None:
+    text = "Some prose.\n\n![a figure](fig.png)\n\nMore prose.\n"
+    pieces, _, _, chunks, _ = _run(text)
+    assert [p.kind for p in pieces if p.kind == "image"] == ["image"]
+    img_chunks = [c for c in chunks if c.lead_token_type == "image"]
+    assert len(img_chunks) == 1
+    assert "![a figure](fig.png)" in img_chunks[0].text
+    # The image chunk stands alone — prose on either side stays separate.
+    assert len(chunks) == 3
+    assert "Some prose." in chunks[0].text
+    assert "More prose." in chunks[2].text
+
+
+def test_inline_image_in_prose_stays_a_prose_chunk() -> None:
+    text = "Look at ![this](pic.png) carefully.\n"
+    _, _, _, chunks, _ = _run(text)
+    assert len(chunks) == 1
+    assert chunks[0].lead_token_type == "paragraph"
+    assert "![this](pic.png)" in chunks[0].text
+
+
+def test_consecutive_block_images_are_not_bundled() -> None:
+    text = "![one](a.png)\n\n![two](b.png)\n\n![three](c.png)\n"
+    _, _, _, chunks, _ = _run(text)
+    assert [c.lead_token_type for c in chunks] == ["image", "image", "image"]
+    assert "a.png" in chunks[0].text
+    assert "b.png" in chunks[1].text
+    assert "c.png" in chunks[2].text
+
+
+def test_colon_lead_in_absorbs_into_block_image() -> None:
+    """Consistent with code/list/blockquote/table (claude-axx.2): a
+    colon-terminated paragraph pulls the following block image into one
+    chunk so the lead-in and the figure it introduces read together."""
+    text = "See the diagram below:\n\n![architecture](arch.png)\n"
+    _, _, plan, chunks, _ = _run(text)
+    assert len(chunks) == 1
+    assert "See the diagram below:" in chunks[0].text
+    assert "![architecture](arch.png)" in chunks[0].text
+    assert plan.planned_chunks[0].reason == "list_with_colon_lead_in"
+
+
+def test_block_image_default_cost_is_fixed_six_seconds() -> None:
+    text = "![fig](fig.png)\n"
+    _, preprocessed, _, chunks, _ = _run(text)
+    img = next(p for p in preprocessed if p.is_image)
+    assert img.estimated_read_seconds == 6.0
+    assert chunks[0].estimated_read_seconds == 6.0
+
+
+def test_block_image_cost_can_derive_from_alt_text_words() -> None:
+    rules = ChunkingRuleset(reading_rules=ReadingRules(image_seconds=None))
+    # 4 alt words at 220 wpm = 4/220*60 ≈ 1.09s
+    text = "![a four word caption](fig.png)\n"
+    _, preprocessed, _, _, _ = _run(text, rules)
+    img = next(p for p in preprocessed if p.is_image)
+    assert img.estimated_read_seconds == pytest.approx(4 / 220 * 60)
+
+
+def test_captionless_block_image_with_derived_cost_is_zero() -> None:
+    rules = ChunkingRuleset(reading_rules=ReadingRules(image_seconds=None))
+    text = "![](fig.png)\n"
+    _, preprocessed, _, _, _ = _run(text, rules)
+    img = next(p for p in preprocessed if p.is_image)
+    assert img.estimated_read_seconds == 0.0
+
+
+def test_block_image_renders_an_img_element() -> None:
+    from parsem.web.view import render_chunk_html
+    html = str(render_chunk_html("![alt words](pic.png)\n"))
+    assert "<img" in html
+    assert 'alt="alt words"' in html
+    assert 'src="pic.png"' in html
 
 
 # --- materialization invariants --------------------------------------------

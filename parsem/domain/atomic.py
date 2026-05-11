@@ -34,6 +34,7 @@ PieceKind = Literal[
     "blockquote",
     "table",
     "horizontal_rule",
+    "image",
 ]
 
 
@@ -138,6 +139,13 @@ def build_atomic_pieces(
         elif block.type == "horizontal_rule":
             pieces.append(_make_block_piece(
                 block, kind="horizontal_rule", ordinal=len(pieces),
+                source_block_index=block_index, ordinal_in_block=0,
+                line_index=line_index,
+            ))
+            block_index += 1
+        elif block.type == "image":
+            pieces.append(_make_block_piece(
+                block, kind="image", ordinal=len(pieces),
                 source_block_index=block_index, ordinal_in_block=0,
                 line_index=line_index,
             ))

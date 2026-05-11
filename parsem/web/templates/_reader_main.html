@@ -29,6 +29,7 @@
         <article
           class="chunk {% if entry.chunk.position == current_position %}chunk--current{% else %}chunk--settled{% endif %}"
           data-chunk-position="{{ entry.chunk.position }}"
+          data-lead-type="{{ entry.chunk.lead_token_type }}"
         >
           <span class="pin-dot"
             {% if entry.chunk.position in pin_colors %}data-pin-color="{{ pin_colors[entry.chunk.position] }}"{% endif %}

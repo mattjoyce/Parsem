@@ -253,6 +253,15 @@ body {
 .chunk a { color: inherit; text-decoration: underline; text-decoration-thickness: 1px; }
 .chunk hr { border: 0; border-top: 1px solid rgba(0, 0, 0, 0.1); margin: 0.8em 0; }
 
+/* Images (claude-axx.6). Any image — inline or block-level — is capped
+ * to the column so it never blows out the reading width. A block-level
+ * image chunk (its own reveal unit; lead_token_type == "image") centres
+ * the figure and drops the wrapping <p>'s vertical margin so the image
+ * is the chunk, not a paragraph that happens to hold one. */
+.chunk img { max-width: 100%; height: auto; }
+.chunk[data-lead-type="image"] p { margin: 0; text-align: center; }
+.chunk[data-lead-type="image"] img { display: block; margin: 0.3em auto; }
+
 /* The first chunk's first content element should sit flush under the
  * top-bar — strip its top margin so reveal-from-zero doesn't leave a
  * gap. The pin-dot is absolute-positioned and doesn't count. */

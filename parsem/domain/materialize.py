@@ -73,6 +73,7 @@ _PIECE_KIND_TO_BLOCK_TYPE: dict[PieceKind, BlockType] = {
     "blockquote": "blockquote",
     "table": "table",
     "horizontal_rule": "horizontal_rule",
+    "image": "image",
 }
 
 

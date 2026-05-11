@@ -76,3 +76,39 @@ def test_mixed_document_has_blocks_in_source_order() -> None:
     assert [b.type for b in blocks] == ["heading", "paragraph", "heading", "paragraph"]
     for previous, current in pairwise(blocks):
         assert previous.source_offset_end <= current.source_offset_start
+
+
+# --- block-level images (claude-axx.6) --------------------------------------
+
+
+def test_standalone_image_paragraph_is_an_image_block() -> None:
+    blocks = parse("![a diagram](pic.png)\n")
+    assert len(blocks) == 1
+    assert blocks[0].type == "image"
+
+
+def test_prose_with_inline_image_stays_a_paragraph() -> None:
+    blocks = parse("See ![this](pic.png) for details.\n")
+    assert len(blocks) == 1
+    assert blocks[0].type == "paragraph"
+
+
+def test_consecutive_image_paragraphs_each_become_their_own_block() -> None:
+    blocks = parse("![one](a.png)\n\n![two](b.png)\n\n![three](c.png)\n")
+    assert [b.type for b in blocks] == ["image", "image", "image"]
+
+
+def test_image_block_offsets_reconstruct_text() -> None:
+    src = "# Title\n\n![fig](f.png)\n\nProse after.\n"
+    blocks = parse(src)
+    assert [b.type for b in blocks] == ["heading", "image", "paragraph"]
+    for block in blocks:
+        assert src[block.source_offset_start : block.source_offset_end] == block.text
+
+
+def test_two_images_in_one_paragraph_stays_a_paragraph() -> None:
+    # Two images separated only by a space share one inline run — not the
+    # standalone form, so it remains prose. (Separate paragraphs split.)
+    blocks = parse("![a](a.png) ![b](b.png)\n")
+    assert len(blocks) == 1
+    assert blocks[0].type == "paragraph"
