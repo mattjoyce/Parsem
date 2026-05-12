@@ -112,6 +112,28 @@ def test_post_ingest_file_with_bad_markdown_creates_failed_row(
     assert doc.status == "failed"
 
 
+def test_post_ingest_pdf_is_queued_not_self_ingested(
+    fresh_app: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """A .pdf upload is left in inbound/raw/ for the watcher — NOT run
+    through process_raw_arrival here, which would `submit_to_marker`
+    (moving the PDF to originals/<id>/source.pdf) but leave nobody to
+    dispatch Marker. claude-als."""
+    client, conn, originals = fresh_app
+    response = client.post(
+        "/ingest",
+        files={"file": ("doc.pdf", b"%PDF-1.4 ...", "application/pdf")},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    # No document row — not ingested, not staged.
+    (count,) = conn.execute("SELECT COUNT(*) FROM documents").fetchone()
+    assert count == 0
+    # Still sitting in inbound/raw/ for ductile's folderwatch.
+    raw_dir = originals.parent / "inbound" / "raw"
+    assert (raw_dir / "doc.pdf").read_bytes() == b"%PDF-1.4 ..."
+
+
 def test_post_ingest_file_with_no_file_returns_400(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:

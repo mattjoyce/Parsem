@@ -5,16 +5,20 @@ Spec: ADR docs/adr/0001-nas-ingest-pipeline.md, 0002; bd claude-als.
 Single endpoint, two content-types:
 
 - `multipart/form-data` with a `file` field — direct file upload from
-  the library page form. Writes to `inbound/raw/<safe-filename>` and
-  then runs `process_raw_arrival` inline (the same handler ductile's
-  folderwatch knocks): a standalone `parsem serve` has no watcher
-  draining `inbound/raw/`, so the web upload self-ingests. Idempotent —
-  if ductile *also* knocks for the same file it's a content-hash-dedup
-  no-op. Redirects to `/library`.
+  the library page form. Writes to `inbound/raw/<safe-filename>`. A
+  `.md` upload is then self-ingested inline via `process_raw_arrival`
+  (the same handler ductile's folderwatch knocks) — so a standalone
+  `parsem serve` with no watcher still turns the upload into a document;
+  idempotent, so a later ductile knock for the same file is a
+  content-hash-dedup no-op. A `.pdf` (or anything else) is left QUEUED:
+  PDFs need Marker, which is a ductile pipeline, and `process_raw_arrival`
+  on a `.pdf` would move it to `originals/<id>/source.pdf` and return
+  `submit_to_marker` — which only ductile can act on, so calling it here
+  would just orphan the PDF. Redirects to `/library`.
 - `application/json` with `{"url": "..."}` — URL ingest from CLI or
   programmatic clients. Writes to `inbound/raw/` and returns 202 with
-  the queued filename (still watcher-driven; CLI clients rely on the
-  "queued" contract).
+  the queued filename (always watcher-driven; CLI clients rely on the
+  "queued" contract — and a fetched .pdf still needs Marker).
 """
 
 from __future__ import annotations
@@ -45,11 +49,11 @@ class IngestUrlBody(BaseModel):
 async def post_ingest(
     request: Request, file: UploadFile | None = None
 ) -> RedirectResponse | JSONResponse:
-    """Drop a file or URL into `inbound/raw/`. Form file upload then
-    runs `process_raw_arrival` inline so a standalone server still turns
-    the upload into a document; it redirects to /library. JSON {url}
-    submission writes the fetched bytes and returns 202 with the queued
-    filename (watcher-driven)."""
+    """Drop a file or URL into `inbound/raw/`. A `.md` form upload is
+    self-ingested inline so a standalone server still turns it into a
+    document; PDFs (and anything else, and all `{url}` drops) stay
+    queued for the watcher. Form uploads redirect to /library; `{url}`
+    returns 202 with the queued filename."""
     inbound_raw_dir: Path = request.app.state.inbound_raw_dir
     timeout = getattr(request.app.state, "url_timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
     max_bytes = getattr(request.app.state, "url_max_bytes", DEFAULT_MAX_BYTES)
@@ -73,12 +77,17 @@ async def post_ingest(
     raw_bytes = await file.read()
     target = unique_inbound_path(inbound_raw_dir, file.filename)
     target.write_bytes(raw_bytes)
-    # Self-ingest: no ductile folderwatch in a standalone server, so
-    # run the arrival handler now (idempotent — a later ductile knock
-    # for the same file dedups on content hash). claude-als.
-    process_raw_arrival(
-        target,
-        conn=request.app.state.db,
-        originals_dir=request.app.state.originals_dir,
-    )
+    # Self-ingest .md only: a standalone server has no ductile folderwatch
+    # draining inbound/raw/, so run the arrival handler now (idempotent —
+    # a later ductile knock for the same file dedups on content hash).
+    # A .pdf is left queued: process_raw_arrival on it returns
+    # `submit_to_marker` (and moves it to originals/<id>/source.pdf) — and
+    # only ductile can dispatch Marker, so doing it here would orphan the
+    # PDF. claude-als.
+    if target.suffix.lower() == ".md":
+        process_raw_arrival(
+            target,
+            conn=request.app.state.db,
+            originals_dir=request.app.state.originals_dir,
+        )
     return RedirectResponse(url="/library", status_code=302)
