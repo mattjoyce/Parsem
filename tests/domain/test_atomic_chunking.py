@@ -299,6 +299,26 @@ def test_colon_lead_in_absorbs_into_table() -> None:
     assert "| col" in chunks[0].text
 
 
+def test_pipe_table_is_one_atomic_piece_never_sliced_across_chunks() -> None:
+    """A pipe-table is one whole-block atomic piece (table_atomicity=
+    "block", claude-l51) — even a long table stays in a single chunk
+    rather than being cut row-by-row by reading-time packing."""
+    text = (
+        "Intro paragraph that sets up the table.\n\n"
+        "| Finding | Status | Reasoning |\n"
+        "| --- | --- | --- |\n"
+        "| A | High | because of a fairly long explanation that runs on a bit. |\n"
+        "| B | Medium | another lengthy explanation padding this row out further. |\n"
+        "| C | Low | yet more cell text so the table comfortably exceeds a budget. |\n\n"
+        "Outro paragraph after the table.\n"
+    )
+    pieces, _, _, chunks, _ = _run(text)
+    assert sum(1 for p in pieces if p.kind == "table") == 1
+    table_chunk = next(c for c in chunks if "| Finding |" in c.text)
+    # First and last rows live in the SAME chunk — the table wasn't split.
+    assert "| C | Low |" in table_chunk.text
+
+
 def test_colon_lead_in_does_not_absorb_into_horizontal_rule() -> None:
     """HR is now skipped entirely from chunking (claude-jvs.3), so a
     colon-terminated paragraph followed by an HR cannot pull the HR

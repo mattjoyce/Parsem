@@ -56,6 +56,17 @@ def test_blockquote_produces_one_blockquote_block_absorbing_inner_paragraph() ->
     assert blocks[0].source_offset_end == len(src)
 
 
+def test_pipe_table_produces_one_table_block_absorbing_its_rows() -> None:
+    """GFM table rule is enabled (claude-l51): a pipe-table is ONE
+    `table` block whose source slice covers all rows — not a paragraph,
+    not one block per row."""
+    src = "| col | data |\n| --- | ---- |\n| a | 1 |\n| b | 2 |\n"
+    blocks = parse(src)
+    assert len(blocks) == 1
+    assert blocks[0].type == "table"
+    assert src[blocks[0].source_offset_start : blocks[0].source_offset_end] == blocks[0].text
+
+
 def test_empty_heading_produces_a_heading_block() -> None:
     blocks = parse("#\n")
     assert len(blocks) == 1

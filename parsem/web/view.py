@@ -17,7 +17,10 @@ from parsem.domain.bucket import tokens_now
 from parsem.domain.materialize import Chunk
 from parsem.web.state import ReaderState
 
-_RENDERER = MarkdownIt("commonmark", {"html": False})
+_RENDERER = MarkdownIt("commonmark", {"html": False}).enable("table")
+# CommonMark + the GFM `table` rule (claude-l51) — matches the parser
+# (`markdown_parse._PARSER`) so a pipe-table that the chunker kept whole
+# renders as a real <table>, not literal `|` text.
 # Explicit `html=False` — the commonmark profile actually defaults to
 # `html=True`, so we override. Raw HTML / `<script>` in user-uploaded
 # markdown is escaped to text. Single-user local-first app — the user

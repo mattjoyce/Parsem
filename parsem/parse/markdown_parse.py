@@ -66,7 +66,11 @@ _ABSORBING_CLOSE_TYPES: frozenset[str] = frozenset(
     {"list_item_close", "blockquote_close", "table_close"}
 )
 
-_PARSER = MarkdownIt("commonmark")
+# CommonMark plus the GFM `table` block rule (claude-l51). Without it a
+# pipe-table parses as a plain paragraph and the atomic chunker slices
+# it sentence-by-sentence; with it we get a real `table` block, which
+# `table_atomicity="block"` keeps whole and `_ABSORBING_TYPES` covers.
+_PARSER = MarkdownIt("commonmark").enable("table")
 
 
 def parse(markdown_text: str) -> list[ParsedBlock]:

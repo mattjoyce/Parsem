@@ -333,6 +333,27 @@ body {
 }
 .chunk hr { border: 0; border-top: 1px solid var(--tint-2); margin: 0.8em 0; }
 
+/* GFM tables (claude-l51) — the chunker keeps a table whole, the
+ * renderer emits a real <table>. Sized to content but capped to the
+ * column (`max-width: 100%`) so a wide table compresses + wraps its
+ * cells instead of blowing out the reading width. Per-column alignment
+ * from `:---`/`:--:`/`---:` arrives as inline `text-align` styles —
+ * left here is just the default. Borders/header use the theme tints. */
+.chunk table {
+  border-collapse: collapse;
+  max-width: 100%;
+  margin: 0.45em 0;
+  font-size: 0.92em;
+  line-height: 1.4;
+}
+.chunk th, .chunk td {
+  border: 1px solid var(--tint-2);
+  padding: 0.25em 0.5em;
+  text-align: left;
+  vertical-align: top;
+}
+.chunk thead th { background: var(--tint-1); font-weight: 700; }
+
 /* Images (claude-axx.6). Any image — inline or block-level — is capped
  * to the column so it never blows out the reading width. A block-level
  * image chunk (its own reveal unit; lead_token_type == "image") centres

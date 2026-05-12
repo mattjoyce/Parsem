@@ -105,6 +105,15 @@ def test_render_chunk_html_renders_code_fence() -> None:
     assert "<pre>" in html and "<code" in html
 
 
+def test_render_chunk_html_renders_pipe_table() -> None:
+    """GFM `table` rule is enabled (claude-l51): a pipe-table becomes a
+    real <table>, not literal `|` text."""
+    html = render_chunk_html("| col | data |\n| --- | --- |\n| a | 1 |\n")
+    assert "<table>" in html and "</table>" in html
+    assert "<thead>" in html and "<tbody>" in html
+    assert "<td>1</td>" in html
+
+
 def test_render_chunk_html_escapes_raw_html_tags() -> None:
     """commonmark mode keeps html=False — embedded <script> stays as
     text. Single-user app, but defense in depth."""
