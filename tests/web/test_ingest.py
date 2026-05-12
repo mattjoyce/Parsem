@@ -1,10 +1,11 @@
-"""Tests for the ingest pipeline (claude-mwx.1 + claude-mwx.2).
+"""Tests for the ingest pipeline (claude-mwx.1 + claude-mwx.2 + claude-als).
 
-POST /ingest writes drops to inbound/raw/; ductile then knocks the
-arrivals endpoints to actually ingest. Tests here cover the route
-surface (write to inbound/raw/, content-type dispatch, redirect/JSON
-shapes) and round-trip via the synchronous arrivals core
-(`process_raw_arrival`) to keep timing deterministic.
+POST /ingest writes a drop to inbound/raw/. The form-file branch then
+runs `process_raw_arrival` inline (self-ingest — no ductile watcher in
+a standalone server); the JSON {url} branch stays watcher-driven and
+returns 202. Tests here cover the route surface (content-type dispatch,
+redirect/JSON shapes, self-ingest, dedup, filename sanitization) and
+round-trip via the arrivals core.
 """
 
 from __future__ import annotations
@@ -67,13 +68,14 @@ def test_old_upload_route_returns_404(
     assert client.post("/upload").status_code == 404
 
 
-def test_post_ingest_file_writes_to_inbound_raw(
+def test_post_ingest_file_self_ingests_and_creates_document(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
-    tmp_path: Path,
 ) -> None:
-    """Form file upload lands in inbound/raw/ with a sanitized name
-    and redirects to /library."""
-    client, _, originals = fresh_app
+    """Form file upload self-ingests (no ductile watcher needed): the
+    .md becomes a `ready` document, gets moved into
+    originals/<id>/document.md, leaves inbound/raw/ empty, and the
+    response redirects to /library. claude-als."""
+    client, conn, originals = fresh_app
     md = b"# Hello\n\nThe body.\n"
     response = client.post(
         "/ingest",
@@ -82,8 +84,32 @@ def test_post_ingest_file_writes_to_inbound_raw(
     )
     assert response.status_code == 302
     assert response.headers["location"] == "/library"
+    doc = load_document(conn, 1)
+    assert doc is not None
+    assert doc.status == "ready"
+    assert layout.markdown_path(originals, 1).read_bytes() == md
     raw_dir = originals.parent / "inbound" / "raw"
-    assert (raw_dir / "hello.md").read_bytes() == md
+    assert not (raw_dir / "hello.md").exists()
+    # And it shows up in the library listing.
+    assert "hello" in client.get("/library").text
+
+
+def test_post_ingest_file_with_bad_markdown_creates_failed_row(
+    fresh_app: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """An upload that parses to nothing still produces a row (status
+    `failed`) so the library shows it with a Retry button — the upload
+    never silently vanishes."""
+    client, conn, _ = fresh_app
+    response = client.post(
+        "/ingest",
+        files={"file": ("empty.md", b"   \n\n  \n", "text/markdown")},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    doc = load_document(conn, 1)
+    assert doc is not None
+    assert doc.status == "failed"
 
 
 def test_post_ingest_file_with_no_file_returns_400(
@@ -111,42 +137,42 @@ def test_post_ingest_url_writes_fetched_bytes_to_inbound_raw(
     assert (raw_dir / "article.md").read_bytes() == b"# from-url\n"
 
 
-def test_post_ingest_filename_collision_suffixes(
+def test_post_ingest_dedups_repeated_uploads(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
-    """Re-submitting the same filename gets _2, _3 suffixes — keeps
-    concurrent submissions from clobbering each other."""
-    client, _, originals = fresh_app
-    raw_dir = originals.parent / "inbound" / "raw"
-    md = b"# x\n"
+    """Uploading the same content three times produces ONE document —
+    `process_raw_arrival` dedups on content hash, so a fat-fingered
+    double-submit doesn't litter the library. claude-als."""
+    client, conn, _ = fresh_app
+    md = b"# x\n\nbody text.\n"
     for _ in range(3):
         client.post(
             "/ingest",
             files={"file": ("dup.md", md, "text/markdown")},
             follow_redirects=False,
         )
-    assert (raw_dir / "dup.md").exists()
-    assert (raw_dir / "dup_2.md").exists()
-    assert (raw_dir / "dup_3.md").exists()
+    (count,) = conn.execute("SELECT COUNT(*) FROM documents").fetchone()
+    assert count == 1
 
 
 def test_post_ingest_sanitizes_filename(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
     """Path traversal attempts get neutralized: any character outside
-    [A-Za-z0-9._-] becomes '_'; path separators are stripped first."""
-    client, _, originals = fresh_app
+    [A-Za-z0-9._-] becomes '_'; path separators are stripped first. The
+    sanitized .md is then found and ingested."""
+    client, conn, originals = fresh_app
     raw_dir = originals.parent / "inbound" / "raw"
     response = client.post(
         "/ingest",
-        files={"file": ("../../etc/passwd.md", b"x", "text/markdown")},
+        files={"file": ("../../etc/passwd.md", b"hello content\n", "text/markdown")},
         follow_redirects=False,
     )
     assert response.status_code == 302
-    # No file created outside raw_dir
+    # No file ever created outside raw_dir.
     assert not (raw_dir.parent.parent / "passwd.md").exists()
-    # Sanitized name lands in raw_dir
-    assert any(p.name.endswith("passwd.md") for p in raw_dir.iterdir())
+    # The sanitized .md was found and ingested into a document.
+    assert load_document(conn, 1) is not None
 
 
 # Round-trip via the arrivals core

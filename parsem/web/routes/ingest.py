@@ -1,17 +1,20 @@
-"""POST /ingest — async drop point for the ingest pipeline.
+"""POST /ingest — drop point for the ingest pipeline.
 
-Spec: ADR docs/adr/0001-nas-ingest-pipeline.md.
+Spec: ADR docs/adr/0001-nas-ingest-pipeline.md, 0002; bd claude-als.
 
 Single endpoint, two content-types:
 
 - `multipart/form-data` with a `file` field — direct file upload from
-  the library page form. Redirects to `/library` on success.
+  the library page form. Writes to `inbound/raw/<safe-filename>` and
+  then runs `process_raw_arrival` inline (the same handler ductile's
+  folderwatch knocks): a standalone `parsem serve` has no watcher
+  draining `inbound/raw/`, so the web upload self-ingests. Idempotent —
+  if ductile *also* knocks for the same file it's a content-hash-dedup
+  no-op. Redirects to `/library`.
 - `application/json` with `{"url": "..."}` — URL ingest from CLI or
-  programmatic clients. Returns 202 with a JSON envelope.
-
-Both write to `inbound/raw/<safe-filename>`. The filesystem-watcher
-picks up the file and runs `parse_and_persist`. The endpoint never
-parses inline — the parse is the watcher's job.
+  programmatic clients. Writes to `inbound/raw/` and returns 202 with
+  the queued filename (still watcher-driven; CLI clients rely on the
+  "queued" contract).
 """
 
 from __future__ import annotations
@@ -22,6 +25,7 @@ from fastapi import APIRouter, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
+from parsem.ingest.arrivals import process_raw_arrival
 from parsem.ingest.paths import unique_inbound_path
 from parsem.ingest.url_fetch import (
     DEFAULT_MAX_BYTES,
@@ -41,8 +45,11 @@ class IngestUrlBody(BaseModel):
 async def post_ingest(
     request: Request, file: UploadFile | None = None
 ) -> RedirectResponse | JSONResponse:
-    """Drop a file or URL into `inbound/raw/`. Form submission redirects
-    to /library; JSON submission returns 202 with the queued filename."""
+    """Drop a file or URL into `inbound/raw/`. Form file upload then
+    runs `process_raw_arrival` inline so a standalone server still turns
+    the upload into a document; it redirects to /library. JSON {url}
+    submission writes the fetched bytes and returns 202 with the queued
+    filename (watcher-driven)."""
     inbound_raw_dir: Path = request.app.state.inbound_raw_dir
     timeout = getattr(request.app.state, "url_timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
     max_bytes = getattr(request.app.state, "url_max_bytes", DEFAULT_MAX_BYTES)
@@ -66,4 +73,12 @@ async def post_ingest(
     raw_bytes = await file.read()
     target = unique_inbound_path(inbound_raw_dir, file.filename)
     target.write_bytes(raw_bytes)
+    # Self-ingest: no ductile folderwatch in a standalone server, so
+    # run the arrival handler now (idempotent — a later ductile knock
+    # for the same file dedups on content hash). claude-als.
+    process_raw_arrival(
+        target,
+        conn=request.app.state.db,
+        originals_dir=request.app.state.originals_dir,
+    )
     return RedirectResponse(url="/library", status_code=302)
