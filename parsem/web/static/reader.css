@@ -1,9 +1,44 @@
-/* Parsem reader — Phase 1 styles. Spec: parsem-spec.md §15.3 (paper default), §9.5 (top bar + reading viewport). */
+/* Parsem reader — styles. Spec: parsem-spec.md §15.3 (presentation:
+ * themes / prose font / density / width), §9.5 (top bar + reading
+ * viewport).
+ *
+ * Presentation is theming-by-attribute (claude-rdk): the no-FOUC
+ * bootstrap in <head> (templates/_prefs_bootstrap.html) reads
+ * localStorage.parsem_prefs and sets, before first paint:
+ *   <html data-theme=… data-density=… data-width=…
+ *         style="--font-size:…; --prose-font:…">
+ * and the "Aa" / ',' panel (static/prefs.js) writes those back. :root
+ * holds the DEFAULTS — paper bg, serif (Charter), 18px, normal density
+ * (line-height 1.6, per Matt's call 2026-05-12), normal width (760px).
+ * "compact" / "narrow" / sepia / dark are opt-in [data-*] overrides.
+ *
+ * A theme is 6 tokens: --bg --ink --accent --tint-1/2/3. Pin colours,
+ * rating colours and --reject-color are SEMANTIC — constant across
+ * themes, never overridden in a [data-theme] block.
+ *  --accent     : the "you are here" colour — current-chunk gutter bar,
+ *                 link underline, the resting colour of the reject pulse.
+ *  --tint-1     : subtlest fills — inline-code bg, top-bar hairline, track.
+ *  --tint-2     : visible hairlines — blockquote bar, <hr>, panel borders.
+ *  --tint-3     : strong neutral accents — fills, muted glyphs.
+ * Light themes are black-based tints, dark is white-based, so a single
+ * attribute flip recolours every surface cleanly. */
 
 :root {
-  --paper: #FAF7F0;
+  /* presentation knobs — overridden by [data-*] / inline --font-size /
+   * inline --prose-font from the bootstrap. These are the paper theme. */
+  --bg: #FAF7F0;
   --ink: #1A1A1A;
-  --column-max: 720px;
+  --accent: #5E5346;             /* warm taupe — visible 2px line, not a brand colour */
+  --prose-font: Charter, Georgia, "Times New Roman", serif;
+  --code-font: "JetBrains Mono", Menlo, Consolas, ui-monospace, monospace;
+  --font-size: 18px;
+  --line-height: 1.6;            /* normal density (default); compact opts down to 1.45 */
+  --chunk-gap: 0.6em;            /* extra space between chunks; 0 in compact */
+  --tint-1: rgba(0, 0, 0, 0.05); /* subtle fills: code bg, top-bar line, track */
+  --tint-2: rgba(0, 0, 0, 0.15); /* visible lines: blockquote bar, hr, panel borders */
+  --tint-3: rgba(0, 0, 0, 0.35); /* strong accents: muted glyphs, fills */
+
+  --column-max: 760px;           /* normal width (default); narrow 640 / wide 920 */
   --gutter: 16px;
   /* Right gutter is wider than left because it carries the rating
    * prompt's vertical dot stack (claude-axx.3 UAT, spec §9.5) AND
@@ -30,10 +65,43 @@
    * amber 4 (struggle), red 5 (struggled). */
   --rating-1: #6FA8D6;
   --rating-2: #6FA8D6;
-  --rating-3: rgba(0, 0, 0, 0.4);
+  --rating-3: var(--tint-3);
   --rating-4: var(--reject-color);
   --rating-5: #C24E3A;
 }
+
+/* --- themes (spec §15.3, claude-rdk) — paper lives in :root --------
+ * 6 tokens each. Tints stay black-based in light themes, white-based in
+ * dark, so nothing muddy bleeds through. Palette weights validated for
+ * WCAG contrast + a quiet (non-glowing) accent line. */
+[data-theme="sepia"] {
+  --bg: #F4ECD8;
+  --ink: #2B2620;
+  --accent: #5E5036;
+  --tint-3: rgba(0, 0, 0, 0.30);
+}
+[data-theme="dark"] {
+  --bg: #1A1A1A;
+  --ink: #E5E0D7;
+  --accent: #AD9C81;
+  --tint-1: rgba(255, 255, 255, 0.06);
+  --tint-2: rgba(255, 255, 255, 0.18);
+  --tint-3: rgba(255, 255, 255, 0.42);
+}
+
+/* --- line spacing (spec §15.3) — "normal" (1.6) is the default in
+ * :root; "compact" is now opt-in (per Matt 2026-05-12). Also scales
+ * --chunk-gap so denser line-height pulls chunks closer too. */
+[data-density="compact"]  { --line-height: 1.45; --chunk-gap: 0; }
+[data-density="normal"]   { --line-height: 1.6;  --chunk-gap: 0.6em; }
+[data-density="spacious"] { --line-height: 1.85; --chunk-gap: 1.1em; }
+
+/* --- column width (claude-rdk) — "normal" (760px) is the default in
+ * :root. Add a width = add one line; --column-max feeds #reader-main's
+ * max-width below. */
+[data-width="narrow"] { --column-max: 640px; }
+[data-width="normal"] { --column-max: 760px; }
+[data-width="wide"]   { --column-max: 920px; }
 
 html, body {
   margin: 0;
@@ -41,11 +109,11 @@ html, body {
 }
 
 body {
-  background: var(--paper);
+  background: var(--bg);
   color: var(--ink);
-  font-family: Charter, Georgia, serif;
-  font-size: 18px;
-  line-height: 1.45;
+  font-family: var(--prose-font);
+  font-size: var(--font-size);
+  line-height: var(--line-height);
 }
 
 /* #reader-main is the swap target AND the layout root: top bar + scroll. */
@@ -62,13 +130,14 @@ body {
  * appears/disappears at heading transitions. */
 .top-bar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  /* identity | progress | token dots | "Aa" panel trigger */
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 1.25em;
   padding: 0.6em 1em;
   min-height: var(--top-bar-height);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-  background: var(--paper);
+  border-bottom: 1px solid var(--tint-1);
+  background: var(--bg);
 }
 
 .top-bar__identity { min-width: 0; }
@@ -105,12 +174,12 @@ body {
 .progress-bar {
   width: 64px;
   height: 2px;
-  background: rgba(0, 0, 0, 0.08);
+  background: var(--tint-1);
   overflow: hidden;
 }
 .progress-bar__fill {
   height: 100%;
-  background: rgba(0, 0, 0, 0.4);
+  background: var(--tint-3);
 }
 
 .top-bar__tokens {
@@ -159,7 +228,7 @@ body {
 .reader-scroll.is-scrolling { scrollbar-width: thin; }
 .reader-scroll.is-scrolling::-webkit-scrollbar { width: 6px; height: 6px; }
 .reader-scroll.is-scrolling::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--tint-3);
   border-radius: 3px;
 }
 
@@ -204,7 +273,7 @@ body {
  * visual differentiator: settled and current text are otherwise
  * indistinguishable (Parsem-kli intent). */
 .chunk--current {
-  border-left: 2px solid rgba(0, 0, 0, 0.35);
+  border-left: 2px solid var(--accent);
   padding-left: 0.5em;
   margin-left: -0.5em;
   /* Current chunk is not a click target — clicking it would set
@@ -212,6 +281,12 @@ body {
    * looking inert under the pointer (spec §8a.3). */
   cursor: default;
 }
+
+/* Inter-chunk breathing room — the line-spacing axis (claude-rdk)
+ * scales this alongside --line-height (0 compact / 0.6em normal /
+ * 1.1em spacious). Collapses with the inner block's own top margin,
+ * so a chunk that opens with a heading still gets its heading air. */
+.chunk + .chunk { margin-top: var(--chunk-gap); }
 
 /* Markdown elements inside .chunk — compact defaults so the revealed
  * text reads as a real, dense document. Headings get just enough air
@@ -228,18 +303,18 @@ body {
 .chunk blockquote {
   margin: 0.3em 0;
   padding: 0.1em 0 0.1em 0.7em;
-  border-left: 3px solid rgba(0, 0, 0, 0.15);
+  border-left: 3px solid var(--tint-2);
   opacity: 0.85;
 }
 .chunk code {
-  font-family: "JetBrains Mono", Menlo, Consolas, monospace;
+  font-family: var(--code-font);
   font-size: 0.9em;
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--tint-1);
   padding: 0.05em 0.3em;
   border-radius: 3px;
 }
 .chunk pre {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--tint-1);
   padding: 0.55em 0.8em;
   border-radius: 4px;
   overflow-x: auto;
@@ -250,8 +325,13 @@ body {
 .chunk pre code { background: none; padding: 0; border-radius: 0; }
 .chunk strong { font-weight: 600; }
 .chunk em { font-style: italic; }
-.chunk a { color: inherit; text-decoration: underline; text-decoration-thickness: 1px; }
-.chunk hr { border: 0; border-top: 1px solid rgba(0, 0, 0, 0.1); margin: 0.8em 0; }
+.chunk a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--accent);
+  text-decoration-thickness: 1px;
+}
+.chunk hr { border: 0; border-top: 1px solid var(--tint-2); margin: 0.8em 0; }
 
 /* Images (claude-axx.6). Any image — inline or block-level — is capped
  * to the column so it never blows out the reading width. A block-level
@@ -298,9 +378,9 @@ body {
   100%     { transform: translateY(0); }
 }
 @keyframes reject-pulse {
-  0%       { border-left-color: rgba(0, 0, 0, 0.35); border-left-width: 2px; }
+  0%       { border-left-color: var(--accent); border-left-width: 2px; }
   35%, 60% { border-left-color: var(--reject-color); border-left-width: 3px; }
-  100%     { border-left-color: rgba(0, 0, 0, 0.35); border-left-width: 2px; }
+  100%     { border-left-color: var(--accent); border-left-width: 2px; }
 }
 
 .pin-dot {
@@ -337,7 +417,7 @@ body {
 /* Pips slide in from the right on rating-prompt hover (the glyph
  * itself is also part of the hover region, so the popout doesn't
  * collapse when the cursor moves between glyph and pips). Float
- * over the chunk's bottom-right with a soft paper-tinted background
+ * over the chunk's bottom-right with a soft page-tinted background
  * so they read against text. */
 .rating-pips {
   display: flex;
@@ -345,9 +425,9 @@ body {
   align-items: center;
   gap: 0.25em;
   padding: 2px 4px;
-  background: var(--paper);
+  background: var(--bg);
   border-radius: 9px;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 0 0 1px var(--tint-1);
   opacity: 0;
   transform: translateX(6px);
   transition: opacity 120ms ease, transform 120ms ease;
@@ -368,7 +448,7 @@ body {
   font-size: 0.95em;
   line-height: 1;
   opacity: 0.4;
-  color: rgba(0, 0, 0, 0.5);
+  color: var(--tint-3);
   transition: opacity 120ms ease, color 120ms ease;
 }
 .rating-prompt:hover .rating-glyph { opacity: 1; }
@@ -395,7 +475,7 @@ body {
   color: inherit;
   transition: background 120ms ease, transform 100ms ease;
 }
-.rating-dot:hover { background: rgba(0, 0, 0, 0.25); }
+.rating-dot:hover { background: var(--tint-3); }
 .rating-dot--filled { background: currentColor; }
 /* Inline reveal glyph (spec §8a.4, claude-axx.8, claude-jvs UAT) —
  * pointer-mode peer of Space. Filled diamond ♦ chosen over the prior
@@ -472,7 +552,7 @@ body {
   border-radius: 3px;
   transition: background 120ms ease, color 200ms ease;
 }
-.chunk-action:hover { background: rgba(0, 0, 0, 0.08); }
+.chunk-action:hover { background: var(--tint-1); }
 
 /* Brief success flash after navigator.clipboard.writeText resolves
  * (JS adds the class for ~1s then removes). The colour shift is the
@@ -511,7 +591,7 @@ body {
   margin-top: 0.25em;
   border-radius: 1px;
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--tint-1);
 }
 .library-heatmap__cell {
   flex: 1 1 0;
@@ -560,7 +640,7 @@ body {
 .preview {
   margin-top: 2em;
   padding-top: 1em;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  border-top: 1px solid var(--tint-1);
   max-height: 6em;
   overflow: hidden;
   filter: blur(3.5px);
@@ -581,3 +661,180 @@ body {
 }
 
 body.review-mode .chunk--settled { opacity: 0.9; }
+
+/* === "Aa" appearance panel (claude-rdk, spec §15.3) ================
+ * Client-side only — prefs.js owns the behaviour, this is just chrome.
+ * The trigger lives in the top bar (reader) / library header; the
+ * overlay + panel live at page level so they survive #reader-main
+ * partial swaps. Everything here themes off the same 6 tokens. */
+
+/* The "Aa" trigger — a quiet type-specimen glyph, peer of the token
+ * dots. .prefs-open is matched by JS via event delegation. */
+.prefs-open {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0.15em 0.4em;
+  margin: 0;
+  font-family: var(--prose-font);
+  font-size: 1em;
+  line-height: 1;
+  color: var(--ink);
+  opacity: 0.5;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: opacity 120ms ease, background 120ms ease;
+}
+.prefs-open:hover,
+.prefs-open:focus-visible { opacity: 1; background: var(--tint-1); }
+/* Small cap A + lowercase a, à la Kindle. */
+.prefs-open .prefs-open__big { font-size: 1.05em; }
+.prefs-open .prefs-open__small { font-size: 0.8em; }
+
+/* Library header — flex so the trigger sits opposite the title. */
+.library-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+/* Modal overlay — fixed, scrims the page, scrolls if the panel is tall.
+ * Hidden via the [hidden] attribute (prefs.js toggles it); the author
+ * `display:flex` would otherwise win over the UA `[hidden]` rule, so we
+ * restate the none. */
+.prefs-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 8vh 1rem 1rem;
+  overflow-y: auto;
+  background: rgba(20, 18, 14, 0.42);  /* scrim — a warm near-black, theme-independent */
+}
+.prefs-overlay[hidden] { display: none; }
+
+.prefs-panel {
+  width: min(420px, 100%);
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--tint-2);
+  border-radius: 10px;
+  box-shadow: 0 14px 44px rgba(20, 18, 14, 0.28);
+  padding: 1.05rem 1.25rem 1.2rem;
+  font-family: var(--prose-font);
+  font-size: 15px;
+  line-height: 1.4;
+}
+.prefs-panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+.prefs-panel__head h2 { margin: 0; font-size: 1.05rem; font-weight: 700; }
+.prefs-close {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0.1rem 0.35rem;
+  font: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--ink);
+  opacity: 0.5;
+  cursor: pointer;
+  border-radius: 5px;
+  transition: opacity 120ms ease, background 120ms ease;
+}
+.prefs-close:hover { opacity: 1; background: var(--tint-1); }
+
+/* One control group per appearance setting. Sectioned so a future
+ * "Reading pace" group (WPM scaler / regen interval — spec §16) can
+ * slot in below without restructuring. */
+.prefs-section { margin-top: 0.95rem; }
+.prefs-section:first-of-type { margin-top: 0.35rem; }
+.prefs-label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  opacity: 0.6;
+  margin-bottom: 0.32rem;
+}
+
+/* Segmented control — a row of mutually-exclusive buttons. The chosen
+ * one carries aria-pressed="true" (prefs.js keeps it in sync). */
+.prefs-segmented {
+  display: flex;
+  border: 1px solid var(--tint-2);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.prefs-segmented button {
+  flex: 1 1 0;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-left: 1px solid var(--tint-2);
+  padding: 0.42rem 0.3rem;
+  font: inherit;
+  font-size: 0.85rem;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.prefs-segmented button:first-child { border-left: 0; }
+.prefs-segmented button:hover { background: var(--tint-1); }
+.prefs-segmented button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* Prose-font picker — a native <select>, options rendered server-side
+ * from config (presentation.fonts). Each option's value is the full
+ * CSS font stack; prefs.js stores it verbatim. */
+.prefs-select {
+  width: 100%;
+  appearance: none;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--tint-2);
+  border-radius: 7px;
+  padding: 0.42rem 0.5rem;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+/* Font-size stepper — − / value / +. Clamped 14–24 by prefs.js. */
+.prefs-stepper { display: flex; align-items: center; gap: 0.6rem; }
+.prefs-stepper button {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--tint-2);
+  border-radius: 6px;
+  width: 1.9rem;
+  height: 1.9rem;
+  font: inherit;
+  font-size: 1.15rem;
+  line-height: 1;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.prefs-stepper button:hover { background: var(--tint-1); }
+.prefs-stepper output {
+  min-width: 3.4rem;
+  text-align: center;
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.prefs-foot {
+  margin-top: 1rem;
+  font-size: 0.72rem;
+  opacity: 0.55;
+}

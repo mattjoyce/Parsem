@@ -9,6 +9,7 @@ import pytest
 
 from parsem.config import (
     DEFAULT_CONFIG_PATH,
+    PresentationSettings,
     ensure_default_config,
     ensure_library_layout,
     load_settings,
@@ -74,12 +75,88 @@ def test_load_settings_uses_defaults_for_missing_sections(tmp_path: Path) -> Non
     assert settings.server.host == "127.0.0.1"
     assert settings.server.port == 8000
     assert settings.ingest.url_timeout_seconds == 30.0
+    # presentation: too — shipped defaults when the block is absent.
+    assert settings.presentation.theme == "paper"
+    assert settings.presentation.density == "normal"
+    assert settings.presentation.width == "normal"
+    assert settings.presentation.font_size == 18
+    assert settings.presentation.fonts  # non-empty shipped list
+    assert settings.presentation.fonts[0].label == "Charter"
 
 
 def test_load_settings_raises_when_file_missing(tmp_path: Path) -> None:
     missing = tmp_path / "nope.yaml"
     with pytest.raises(FileNotFoundError):
         load_settings(missing, auto_create_default=False)
+
+
+# Presentation settings (claude-rdk)
+# ──────────────────────────────────
+
+
+def test_presentation_fonts_parse_and_default_stack(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"paths:\n  data: {tmp_path / 'd'}\n  library: {tmp_path / 'l'}\n"
+        "presentation:\n"
+        "  theme: dark\n"
+        "  density: spacious\n"
+        "  width: wide\n"
+        "  font_size: 21\n"
+        "  fonts:\n"
+        "    - label: Alpha\n"
+        "      stack: 'Alpha, serif'\n"
+        "    - label: Beta\n"
+        "      stack: 'Beta, sans-serif'\n",
+        encoding="utf-8",
+    )
+    pres = load_settings(config, auto_create_default=False).presentation
+    assert pres.theme == "dark"
+    assert pres.density == "spacious"
+    assert pres.width == "wide"
+    assert pres.font_size == 21
+    assert [f.label for f in pres.fonts] == ["Alpha", "Beta"]
+    assert pres.default_font_stack == "Alpha, serif"
+
+
+def test_presentation_falls_back_when_fonts_malformed(tmp_path: Path) -> None:
+    """A `fonts:` list with no usable entries (missing label/stack) must
+    not crash boot — fall back to the shipped defaults."""
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"paths:\n  data: {tmp_path / 'd'}\n  library: {tmp_path / 'l'}\n"
+        "presentation:\n"
+        "  fonts:\n"
+        "    - name: oops\n"  # wrong keys
+        "    - label: HalfBaked\n",  # no stack
+        encoding="utf-8",
+    )
+    pres = load_settings(config, auto_create_default=False).presentation
+    assert pres.fonts[0].label == "Charter"
+
+
+def test_presentation_default_font_stack_is_first_entry() -> None:
+    pres = PresentationSettings.default()
+    assert pres.default_font_stack == pres.fonts[0].stack
+    assert pres.default_font_stack.startswith("Charter")
+
+
+def test_presentation_rejects_bad_axis_values_and_clamps_size(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"paths:\n  data: {tmp_path / 'd'}\n  library: {tmp_path / 'l'}\n"
+        "presentation:\n"
+        "  theme: chartreuse\n"  # not a real theme
+        "  density: ultrawide\n"  # not a real density
+        "  width: enormous\n"  # not a real width
+        "  font_size: 99\n",  # out of [14, 24]
+        encoding="utf-8",
+    )
+    pres = load_settings(config, auto_create_default=False).presentation
+    assert pres.theme == "paper"
+    assert pres.density == "normal"
+    assert pres.width == "normal"
+    assert pres.font_size == 24
 
 
 def test_resolve_config_path_explicit_wins(tmp_path: Path) -> None:
@@ -103,6 +180,8 @@ def test_ensure_default_config_writes_template_only_once(tmp_path: Path) -> None
     assert "paths:" in written
     assert "server:" in written
     assert "ingest:" in written
+    assert "presentation:" in written
+    assert "fonts:" in written
 
 
 # Back-compat env-var resolve_paths

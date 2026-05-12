@@ -50,7 +50,12 @@ def _state(request: Request) -> ReaderState:
 
 def _render_full(request: Request, state: ReaderState) -> HTMLResponse:
     templates = request.app.state.templates
-    return templates.TemplateResponse(request, "reader.html", build_reader_context(state))
+    context = build_reader_context(state)
+    # The no-FOUC bootstrap + "Aa" panel are page-level (live in
+    # reader.html, outside the #reader-main partial), so only the full
+    # render needs the presentation defaults — claude-rdk, spec §15.3.
+    context["presentation"] = request.app.state.presentation
+    return templates.TemplateResponse(request, "reader.html", context)
 
 
 def _render_partial(request: Request, state: ReaderState) -> HTMLResponse:

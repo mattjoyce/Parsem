@@ -56,7 +56,13 @@ def get_library(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "library.html",
-        {"rows": rows, "title_max_len": _TITLE_MAX_LEN},
+        {
+            "rows": rows,
+            "title_max_len": _TITLE_MAX_LEN,
+            # Library shares the reader's appearance bootstrap + "Aa"
+            # panel (claude-rdk, spec §15.3).
+            "presentation": request.app.state.presentation,
+        },
     )
 
 

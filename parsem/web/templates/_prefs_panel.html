@@ -1,0 +1,51 @@
+{# "Aa" appearance panel (claude-rdk, spec §15.3) — a client-side-only
+   modal; static/prefs.js owns all behaviour and localStorage. Include
+   this at PAGE level (outside #reader-main) so it survives reader
+   partial swaps. Sectioned so a future "Reading pace" group (WPM
+   scaler / regen interval — spec §16) can slot in below "Width"
+   without restructuring. Requires `presentation`
+   (parsem.config.PresentationSettings) in the template context. #}
+{% macro segmented(control, label, opts) -%}
+<div class="prefs-section">
+  <span class="prefs-label" id="prefs-{{ control }}-label">{{ label }}</span>
+  <div class="prefs-segmented" role="group" aria-labelledby="prefs-{{ control }}-label" data-prefs-control="{{ control }}">
+    {% for value, text in opts %}<button type="button" data-value="{{ value }}">{{ text }}</button>{% endfor %}
+  </div>
+</div>
+{%- endmacro %}
+<div class="prefs-overlay" id="prefs-overlay" hidden>
+  <div class="prefs-panel" role="dialog" aria-modal="true" aria-labelledby="prefs-title">
+    <div class="prefs-panel__head">
+      <h2 id="prefs-title">Appearance</h2>
+      <button type="button" class="prefs-close" data-prefs-close aria-label="Close">&times;</button>
+    </div>
+
+    {{ segmented("theme", "Theme", [("paper", "Paper"), ("sepia", "Sepia"), ("dark", "Dark")]) }}
+
+    <div class="prefs-section">
+      <label class="prefs-label" for="prefs-font">Font</label>
+      <select class="prefs-select" id="prefs-font" data-prefs-control="fontStack">
+        {% for font in presentation.fonts %}
+        <option value="{{ font.stack }}"{% if loop.first %} selected{% endif %}>{{ font.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="prefs-section">
+      <span class="prefs-label" id="prefs-fontSize-label">Size</span>
+      <div class="prefs-stepper" role="group" aria-labelledby="prefs-fontSize-label" data-prefs-control="fontSize">
+        <button type="button" data-step="-1" aria-label="Smaller">&minus;</button>
+        <output id="prefs-size-out">{{ presentation.font_size }} px</output>
+        <button type="button" data-step="1" aria-label="Larger">&plus;</button>
+      </div>
+    </div>
+
+    {{ segmented("density", "Line spacing", [("compact", "Compact"), ("normal", "Normal"), ("spacious", "Spacious")]) }}
+
+    {{ segmented("width", "Width", [("narrow", "Narrow"), ("normal", "Normal"), ("wide", "Wide")]) }}
+
+    {# Future "Reading pace" .prefs-section (spec §16) slots in here. #}
+
+    <p class="prefs-foot">Saved on this device. <kbd>,</kbd> reopen · <kbd>Esc</kbd> close.</p>
+  </div>
+</div>

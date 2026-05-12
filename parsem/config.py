@@ -24,6 +24,16 @@ The settings tree:
       callback_token:      bearer token required by the ductile-driven
                            /ingest/raw-arrived and /ingest/converted-arrived
                            endpoints (ADR 0002). Empty = permissive (dev).
+
+    presentation:
+      theme/density/width/font_size: the reader's no-localStorage defaults
+                           (per-browser overrides live client-side; spec
+                           §15.3 — "server has nothing to know"). These are
+                           the fallback the no-FOUC bootstrap interpolates.
+      fonts:               the prose-font picker — a list of {label, stack}
+                           entries; the first is the default. CSS/system
+                           stacks only in v1 (bundled webfonts are a
+                           follow-up). claude-rdk.
 """
 
 from __future__ import annotations
@@ -63,6 +73,29 @@ ingest:
   # /ingest/converted-arrived (the ductile callbacks). Empty value
   # means accept any caller — useful in dev; set in prod.
   callback_token: ${PARSEM_INGEST_TOKEN:-}
+
+presentation:
+  # The reader's appearance. theme/density/width/size are also
+  # overridable per-browser via the in-reader "Aa" / "," panel (stored
+  # in localStorage); these values are the no-localStorage fallback.
+  theme: paper            # paper | sepia | dark
+  density: normal         # compact (1.45) | normal (1.6) | spacious (1.85)
+  width: normal           # narrow (640px) | normal (760px) | wide (920px)
+  font_size: 18           # 14-24 px
+  # Prose-font picker. First entry is the default. `stack` is a full CSS
+  # font-family value — v1 ships system/CSS stacks only (bundled
+  # webfonts are a follow-up). Add a font = add a line here.
+  fonts:
+    - label: Charter
+      stack: 'Charter, Georgia, "Times New Roman", serif'
+    - label: Georgia
+      stack: 'Georgia, "Times New Roman", serif'
+    - label: Iowan
+      stack: '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif'
+    - label: System Sans
+      stack: 'system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+    - label: Helvetica
+      stack: '"Helvetica Neue", Helvetica, Arial, sans-serif'
 """
 
 
@@ -102,10 +135,77 @@ class IngestSettings:
 
 
 @dataclass(frozen=True)
+class FontOption:
+    """One entry in the reader's prose-font picker (spec §15.3, claude-rdk).
+    `stack` is a full CSS font-family value; the panel stores it verbatim
+    in localStorage and the bootstrap sets it as the inline `--prose-font`."""
+
+    label: str
+    stack: str
+
+
+# Allowed values for the appearance axes — match the CSS [data-*]
+# blocks in reader.css. An out-of-set value in the YAML falls back to
+# the default rather than rendering an unstyled page.
+_THEMES: tuple[str, ...] = ("paper", "sepia", "dark")
+_DENSITIES: tuple[str, ...] = ("compact", "normal", "spacious")
+_WIDTHS: tuple[str, ...] = ("narrow", "normal", "wide")
+_FONT_SIZE_MIN, _FONT_SIZE_MAX = 14, 24
+
+# Shipped default prose fonts — CSS/system stacks only (no bundled
+# webfonts in v1). First entry is the default; mirrors the YAML template.
+_DEFAULT_FONTS: tuple[FontOption, ...] = (
+    FontOption("Charter", 'Charter, Georgia, "Times New Roman", serif'),
+    FontOption("Georgia", 'Georgia, "Times New Roman", serif'),
+    FontOption(
+        "Iowan", '"Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif'
+    ),
+    FontOption(
+        "System Sans",
+        'system-ui, -apple-system, "Segoe UI", Roboto, '
+        '"Helvetica Neue", Arial, sans-serif',
+    ),
+    FontOption("Helvetica", '"Helvetica Neue", Helvetica, Arial, sans-serif'),
+)
+
+
+@dataclass(frozen=True)
+class PresentationSettings:
+    """The reader's no-localStorage appearance defaults (spec §15.3,
+    claude-rdk). Per-browser overrides live client-side; these values are
+    what the no-FOUC bootstrap interpolates as the empty-localStorage
+    fallback and what the "Aa" panel renders its font picker from."""
+
+    theme: str  # paper | sepia | dark
+    density: str  # compact | normal | spacious
+    width: str  # narrow | normal | wide
+    font_size: int  # 14..24
+    fonts: tuple[FontOption, ...]
+
+    @classmethod
+    def default(cls) -> PresentationSettings:
+        return cls(
+            theme="paper",
+            density="normal",
+            width="normal",
+            font_size=18,
+            fonts=_DEFAULT_FONTS,
+        )
+
+    @property
+    def default_font_stack(self) -> str:
+        """The first picker entry's stack — the prose font used when
+        localStorage carries no `fontStack`. The no-FOUC bootstrap
+        interpolates it via Jinja's `tojson` (HTML/script-safe)."""
+        return self.fonts[0].stack if self.fonts else _DEFAULT_FONTS[0].stack
+
+
+@dataclass(frozen=True)
 class Settings:
     paths: Paths
     server: ServerSettings
     ingest: IngestSettings
+    presentation: PresentationSettings
 
 
 def resolve_config_path(explicit: Path | str | None = None) -> Path:
@@ -167,6 +267,39 @@ def _settings_from_dict(raw: dict[str, Any]) -> Settings:
             url_max_bytes=int(get(raw, "ingest.url_max_bytes", 50 * 1024 * 1024)),
             callback_token=str(get(raw, "ingest.callback_token", "") or ""),
         ),
+        presentation=_presentation_from_dict(raw),
+    )
+
+
+def _one_of(value: object, allowed: tuple[str, ...], default: str) -> str:
+    """`str(value)` if it's in `allowed`, else `default` — so a typo in
+    the YAML degrades to the default rather than an unstyled page."""
+    v = str(value)
+    return v if v in allowed else default
+
+
+def _presentation_from_dict(raw: dict[str, Any]) -> PresentationSettings:
+    """Project the `presentation:` block into PresentationSettings.
+    Tolerant of an absent block or a malformed `fonts:` list — falls back
+    to the shipped defaults entry-by-entry so a half-edited YAML still
+    boots; out-of-range axis values clamp/fall back too."""
+    fonts_raw = get(raw, "presentation.fonts", None)
+    fonts: tuple[FontOption, ...] = _DEFAULT_FONTS
+    if isinstance(fonts_raw, list):
+        parsed = [
+            FontOption(str(entry["label"]), str(entry["stack"]))
+            for entry in fonts_raw
+            if isinstance(entry, dict) and entry.get("label") and entry.get("stack")
+        ]
+        if parsed:
+            fonts = tuple(parsed)
+    font_size = int(get(raw, "presentation.font_size", 18))
+    return PresentationSettings(
+        theme=_one_of(get(raw, "presentation.theme", "paper"), _THEMES, "paper"),
+        density=_one_of(get(raw, "presentation.density", "normal"), _DENSITIES, "normal"),
+        width=_one_of(get(raw, "presentation.width", "normal"), _WIDTHS, "normal"),
+        font_size=max(_FONT_SIZE_MIN, min(_FONT_SIZE_MAX, font_size)),
+        fonts=fonts,
     )
 
 

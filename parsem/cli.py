@@ -100,6 +100,7 @@ def build_app(
         originals_dir=resolved_paths.originals_dir,
         inbound_raw_dir=resolved_paths.inbound_raw_dir,
         ingest_settings=settings.ingest if settings else None,
+        presentation_settings=settings.presentation if settings else None,
     )
 
 

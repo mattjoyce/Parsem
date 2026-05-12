@@ -1,0 +1,27 @@
+{# No-FOUC appearance bootstrap (claude-rdk, spec §15.3). MUST be
+   included in <head> BEFORE the reader.css <link> so first paint
+   already carries the reader's chosen theme / density / width / size /
+   prose-font. Reads localStorage.parsem_prefs (written by prefs.js);
+   falls back to the server's config defaults, interpolated below.
+   The whole thing is wrapped in try/catch — a corrupt localStorage
+   value must never be able to block paint. Requires `presentation`
+   (parsem.config.PresentationSettings) in the template context. #}
+<script>
+(function () {
+  var el = document.documentElement;
+  var def = {
+    theme: {{ presentation.theme | tojson }},
+    density: {{ presentation.density | tojson }},
+    width: {{ presentation.width | tojson }},
+    fontSize: {{ presentation.font_size }},
+    fontStack: {{ presentation.default_font_stack | tojson }}
+  };
+  var p = {};
+  try { p = JSON.parse(localStorage.getItem("parsem_prefs")) || {}; } catch (e) { p = {}; }
+  el.setAttribute("data-theme", p.theme || def.theme);
+  el.setAttribute("data-density", p.density || def.density);
+  el.setAttribute("data-width", p.width || def.width);
+  el.style.setProperty("--font-size", (p.fontSize || def.fontSize) + "px");
+  el.style.setProperty("--prose-font", p.fontStack || def.fontStack);
+})();
+</script>

@@ -16,7 +16,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from parsem.config import IngestSettings
+from parsem.config import IngestSettings, PresentationSettings
 from parsem.ingest.url_fetch import DEFAULT_MAX_BYTES, DEFAULT_TIMEOUT_SECONDS
 from parsem.web.routes.arrivals import router as arrivals_router
 from parsem.web.routes.assets import router as assets_router
@@ -37,11 +37,16 @@ def create_app(
     originals_dir: Path,
     inbound_raw_dir: Path | None = None,
     ingest_settings: IngestSettings | None = None,
+    presentation_settings: PresentationSettings | None = None,
 ) -> FastAPI:
     """Build the FastAPI app wired to a ReaderState plus the SQLite
     connection and the on-disk paths. Callers (CLI + tests) own
     directory creation via `parsem.config.ensure_library_layout`;
-    this factory assumes the contract is in place."""
+    this factory assumes the contract is in place.
+
+    `presentation_settings` supplies the reader's no-localStorage
+    appearance defaults (spec §15.3, claude-rdk); when omitted the
+    shipped defaults are used (tests that don't care about it)."""
     raw_dir = inbound_raw_dir or originals_dir.parent / "inbound" / "raw"
 
     app = FastAPI(title="Parsem", docs_url=None, redoc_url=None)
@@ -58,6 +63,7 @@ def create_app(
     app.state.ingest_callback_token = (
         ingest_settings.callback_token if ingest_settings else ""
     )
+    app.state.presentation = presentation_settings or PresentationSettings.default()
     app.state.templates = Jinja2Templates(directory=_TEMPLATES_DIR)
     app.include_router(library_router)
     app.include_router(reader_router)

@@ -3,11 +3,19 @@
 <head>
   <meta charset="utf-8">
   <title>Parsem — Reader</title>
+  {# No-FOUC appearance bootstrap — MUST precede the stylesheets so the
+     first paint already carries the reader's theme / density / width /
+     size / prose-font (claude-rdk, spec §15.3). #}
+  {% include "_prefs_bootstrap.html" %}
   <link rel="stylesheet" href="/static/reader.css">
   <link rel="stylesheet" href="/static/reader_pins.css">
 </head>
 <body data-document-id="{{ document_id }}">
 {% include "_reader_main.html" %}
+{# The "Aa" panel lives at page level so it survives #reader-main swaps. #}
+{% include "_prefs_panel.html" %}
+{# prefs.js first — its capture-phase keydown listener owns ',' / Esc. #}
+<script src="/static/prefs.js" defer></script>
 <script src="/static/reader_pins.js" defer></script>
 <script src="/static/reader.js" defer></script>
 <script src="/static/reader_lifecycle.js" defer></script>
