@@ -32,6 +32,14 @@
       <button type="button" class="library-rename" data-doc-id="{{ doc.id }}"
               data-current-title="{{ doc.title }}"
               data-max-len="{{ title_max_len }}">Rename</button>
+      {# Re-chunk: re-run the parse/chunk pipeline on the stored .md
+         (claude-m4l) — same endpoint as the failed-doc Retry button.
+         Useful after a chunking-logic change. Reading position is
+         re-anchored, so the confirm just guards an accidental click. #}
+      <form method="post" action="/documents/{{ doc.id }}/retry-parse" class="library-action-form"
+            onsubmit="return confirm('Re-chunk &quot;{{ doc.title }}&quot;? Your reading position is preserved.');">
+        <button type="submit" class="library-rechunk">Re-chunk</button>
+      </form>
     {% elif doc.status == "converting" %}
       {# Converting: action area intentionally bare. Cycle 3 adds a
          re-convert affordance once Marker plumbing is hardened. #}

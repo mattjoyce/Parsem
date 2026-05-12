@@ -204,6 +204,70 @@ def test_ready_row_does_not_render_retry_button(
     assert "library-retry" not in body
 
 
+# ─── Re-chunk: the "Re-chunk" button + the retry-parse endpoint on a
+#     ready doc + the original_path fallback (claude-m4l) ──────────────
+
+
+def test_ready_row_renders_rechunk_button(
+    app_ctx: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    client, conn, originals = app_ctx
+    doc_id = _seed_ready_with_state(
+        conn, originals, body="# T\n\nA paragraph.\n", current=0, high_water=0
+    )
+    row_html = _row_html(client.get("/library").text, doc_id)
+    assert "library-rechunk" in row_html
+    assert f'action="/documents/{doc_id}/retry-parse"' in row_html
+
+
+def test_retry_parse_rechunks_a_ready_doc_keeping_it_ready(
+    app_ctx: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    client, conn, originals = app_ctx
+    doc_id = _seed_ready_with_state(
+        conn, originals, body="# T\n\nA paragraph.\n\nAnother one.\n", current=0, high_water=0
+    )
+    client.post(f"/documents/{doc_id}/retry-parse")
+    doc = load_document(conn, doc_id)
+    assert doc is not None
+    assert doc.status == "ready"
+    chunk_count = conn.execute(
+        "SELECT COUNT(*) FROM chunks WHERE document_id=?", (doc_id,)
+    ).fetchone()[0]
+    assert chunk_count >= 1
+
+
+def test_reparse_document_falls_back_to_original_path(
+    app_ctx: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """A doc whose source is a repo-relative path with no
+    originals/<id>/document.md (the welcome-doc shape) re-chunks via the
+    recorded original_path rather than failing."""
+    from parsem.cli import WELCOME_ORIGINAL_PATH
+    from parsem.web.ingest import reparse_document
+
+    _, conn, originals = app_ctx
+    doc_id = insert_document(
+        conn,
+        title="welcome-style",
+        original_path=WELCOME_ORIGINAL_PATH,  # "data/welcome.md", relative to repo root
+        status="processing",
+        now=T0,
+    )
+    # No originals/<id>/document.md on disk — the fallback must kick in.
+    assert reparse_document(conn, document_id=doc_id, originals_dir=originals, now=T0) is True
+    doc = load_document(conn, doc_id)
+    assert doc is not None and doc.status == "ready"
+    assert doc.total_chunks is not None and doc.total_chunks >= 1
+
+
+def _row_html(library_html: str, doc_id: int) -> str:
+    """Slice out one document's full `<tr>…</tr>` from the library HTML."""
+    start = library_html.index(f'<tr id="library-row-{doc_id}"')
+    end = library_html.index("</tr>", start) + len("</tr>")
+    return library_html[start:end]
+
+
 # ─── Reading-state re-anchor on new chunking_run (claude-jtu) ─────────
 
 

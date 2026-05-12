@@ -1,13 +1,14 @@
 """Library route. Spec: parsem-spec.md §9.1, §22.
 
 Beads: Parsem-3z8 (GET /library v1), Parsem-eci (POST /documents/{id}/delete),
-Parsem-kwq (POST /documents/{id}/rename), Parsem-pnk (POST /documents/{id}/retry-parse).
+Parsem-kwq (POST /documents/{id}/rename), Parsem-pnk + claude-m4l
+(POST /documents/{id}/retry-parse — "Retry" on failed, "Re-chunk" on ready).
 
 Handlers stay thin — the SQL helpers in `parsem.store.documents` carry
-ordering and cascade semantics; the parse pipeline lives in
+ordering and cascade semantics; the re-parse/chunk pipeline lives in
 `parsem.web.ingest`. Here we only orchestrate transport and side
 effects (file unlink, in-memory state reset on self-delete, partial
-fragment rendering on rename, file re-read on retry-parse).
+fragment rendering on rename, delegating the re-parse on retry-parse).
 """
 
 from __future__ import annotations
@@ -24,19 +25,13 @@ from pydantic import BaseModel
 from parsem.ingest import layout
 from parsem.store.documents import (
     delete_document,
-    delete_document_chunks_and_sections,
     list_library_rows,
     load_chunk_ratings_dense,
     load_document,
-    mark_document_failed,
     progress_percent_for_document,
     rename_document,
 )
-from parsem.store.projections_cache import (
-    get_chunk_piece_hashes_for_document,
-    reanchor_reading_state,
-)
-from parsem.web.ingest import parse_and_persist
+from parsem.web.ingest import reparse_document
 from parsem.web.state import empty_reader_state
 
 _TITLE_MAX_LEN = 200
@@ -131,37 +126,18 @@ def post_rename(
 
 @router.post("/documents/{document_id}/retry-parse")
 def post_retry_parse(document_id: int, request: Request) -> RedirectResponse:
-    """Re-run the parse pipeline on the persisted original .md. Wipes
-    any partial chunks/sections from the prior attempt, re-parses, and
-    flips status back to 'ready' on success. Re-failures stay 'failed'
-    with the new reason. Spec §17.2; bead Parsem-pnk."""
+    """Re-run the parse/chunk pipeline on a document's stored markdown.
+    Backs the library "Retry" button (failed docs) and the "Re-chunk"
+    button (ready docs); the work — wipe, re-parse, re-anchor the
+    reading position — lives in `parsem.web.ingest.reparse_document`.
+    Spec §17.2; beads Parsem-pnk + claude-m4l."""
     conn = request.app.state.db
     if load_document(conn, document_id) is None:
         raise HTTPException(status_code=404, detail="Document not found")
-
-    originals_dir: Path = request.app.state.originals_dir
-    file_path = layout.markdown_path(originals_dir, document_id)
-    now = datetime.now(UTC)
-    if not file_path.exists():
-        mark_document_failed(
-            conn, document_id, reason="Original file missing.", now=now
-        )
-        return RedirectResponse(url="/library", status_code=302)
-
-    text = file_path.read_text(encoding="utf-8")
-    # Capture the OLD chunks' piece-hash sets BEFORE the wipe — needed
-    # to re-anchor reading_state after the new chunking_run lands
-    # (claude-jtu). Empty list when the doc has never been parsed
-    # successfully (no prior chunks); reanchor below short-circuits.
-    old_chunk_piece_hashes = get_chunk_piece_hashes_for_document(conn, document_id)
-    delete_document_chunks_and_sections(conn, document_id)
-    success = parse_and_persist(conn, document_id=document_id, text=text, now=now)
-    if success and old_chunk_piece_hashes:
-        reanchor_reading_state(
-            conn,
-            document_id=document_id,
-            old_chunks_piece_hashes=old_chunk_piece_hashes,
-            now=now,
-        )
-        conn.commit()
+    reparse_document(
+        conn,
+        document_id=document_id,
+        originals_dir=request.app.state.originals_dir,
+        now=datetime.now(UTC),
+    )
     return RedirectResponse(url="/library", status_code=302)

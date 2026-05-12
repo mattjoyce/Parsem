@@ -4,6 +4,7 @@ Subcommands:
     parsem [--config PATH]                # back-compat — runs the server
     parsem serve [--config PATH] [--host H] [--port P]
     parsem add <url|file> [--config PATH]
+    parsem rechunk <id> | --all [--config PATH]   # re-run parse/chunk
 
 Config is loaded via `loaden` from `~/.config/parsem/config.yaml`
 (or `--config PATH`). The bundled default template is written there
@@ -36,9 +37,9 @@ from parsem.config import (
 from parsem.ingest.paths import unique_inbound_path
 from parsem.ingest.url_fetch import UrlFetchError, fetch
 from parsem.store.db import connect, migrate
-from parsem.store.documents import insert_document
+from parsem.store.documents import insert_document, load_document
 from parsem.web.app import create_app
-from parsem.web.ingest import parse_and_persist
+from parsem.web.ingest import parse_and_persist, reparse_document
 from parsem.web.state import build_reader_state_for_document
 
 # Spec §20: resume.warm_chunks default. Phase 2 settings.py will read
@@ -149,6 +150,50 @@ def _cmd_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_rechunk(args: argparse.Namespace) -> int:
+    """`parsem rechunk <id>` / `parsem rechunk --all` — re-run the
+    parse/chunk pipeline on a document's stored markdown, off-server
+    (e.g. after a chunking-logic change). claude-m4l."""
+    settings = load_settings(args.config)
+    ensure_library_layout(settings.paths)
+    conn = connect(settings.paths.db_path)
+    migrate(conn)
+    if args.all:
+        ids = [row["id"] for row in conn.execute("SELECT id FROM documents ORDER BY id")]
+        if not ids:
+            print("no documents to re-chunk")
+            return 0
+        print(f"re-chunking {len(ids)} document(s)…")
+    elif args.id is not None:
+        ids = [args.id]
+    else:
+        print("error: give a document id, or --all", file=sys.stderr)
+        return 2
+
+    now = datetime.now(UTC)
+    failures = 0
+    for doc_id in ids:
+        doc = load_document(conn, doc_id)
+        if doc is None:
+            print(f"  {doc_id}: not found", file=sys.stderr)
+            failures += 1
+            continue
+        ok = reparse_document(
+            conn,
+            document_id=doc_id,
+            originals_dir=settings.paths.originals_dir,
+            now=now,
+        )
+        after = load_document(conn, doc_id)
+        if ok and after is not None:
+            print(f"  {doc_id} ({after.title}): re-chunked — {after.total_chunks} chunks")
+        else:
+            reason = after.failure_reason if after else "unknown"
+            print(f"  {doc_id} ({doc.title}): FAILED — {reason}", file=sys.stderr)
+            failures += 1
+    return 1 if failures else 0
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -180,9 +225,23 @@ def main(
     )
     p_add.add_argument("target", help="URL or path to a local file")
 
+    p_rechunk = sub.add_parser(
+        "rechunk", help="re-run the parse/chunk pipeline on a stored document"
+    )
+    p_rechunk.add_argument(
+        "--config", type=Path, default=None,
+        help="Path to YAML config (default: ~/.config/parsem/config.yaml)",
+    )
+    p_rechunk.add_argument(
+        "id", nargs="?", type=int, default=None, help="document id (omit when using --all)"
+    )
+    p_rechunk.add_argument("--all", action="store_true", help="re-chunk every document")
+
     args = parser.parse_args(argv)
     if args.cmd == "add":
         return _cmd_add(args)
+    if args.cmd == "rechunk":
+        return _cmd_rechunk(args)
     if args.cmd in (None, "serve"):
         if args.cmd is None:
             args.host = None

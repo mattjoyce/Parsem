@@ -143,3 +143,77 @@ def test_add_subcommand_with_local_file_drops_to_inbound_raw(
     assert rc == 0
     inbound = tmp_path / "library" / "inbound" / "raw"
     assert (inbound / "sample.md").read_text() == "# hello\n"
+
+
+# --- parsem rechunk (claude-m4l) ---------------------------------------
+
+
+def _seed_ready_doc(tmp_path: Path, *, body: str = "# Doc\n\nA paragraph here.\n") -> int:
+    """Insert a `ready` document into the test DB with a real
+    originals/<id>/document.md on disk, then close the connection so the
+    CLI opens its own. Returns the document id."""
+    from datetime import UTC, datetime
+
+    from parsem.ingest import layout
+    from parsem.store.db import connect, migrate
+    from parsem.store.documents import insert_document
+    from parsem.web.ingest import parse_and_persist
+
+    db_path = tmp_path / "appdata" / "parsem.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = connect(db_path)
+    migrate(conn)
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    doc_id = insert_document(
+        conn, title="rechunk-me", original_path="placeholder", status="processing", now=now
+    )
+    md = layout.markdown_path(tmp_path / "library" / "originals", doc_id)
+    md.parent.mkdir(parents=True, exist_ok=True)
+    md.write_text(body, encoding="utf-8")
+    conn.execute("UPDATE documents SET original_path=? WHERE id=?", (str(md), doc_id))
+    assert parse_and_persist(conn, document_id=doc_id, text=body, now=now)
+    conn.commit()
+    conn.close()
+    return doc_id
+
+
+def _chunk_count(tmp_path: Path, doc_id: int) -> int:
+    from parsem.store.db import connect
+
+    conn = connect(tmp_path / "appdata" / "parsem.db")
+    n = conn.execute(
+        "SELECT COUNT(*) FROM chunks WHERE document_id=?", (doc_id,)
+    ).fetchone()[0]
+    conn.close()
+    return int(n)
+
+
+def test_rechunk_by_id_recreates_chunks(isolated_build: tuple[Path, Path]) -> None:
+    tmp_path, config = isolated_build
+    doc_id = _seed_ready_doc(tmp_path)
+    assert _chunk_count(tmp_path, doc_id) >= 1
+    rc = main(["rechunk", "--config", str(config), str(doc_id)])
+    assert rc == 0
+    assert _chunk_count(tmp_path, doc_id) >= 1  # re-chunked, still has chunks
+
+
+def test_rechunk_all_hits_every_document(isolated_build: tuple[Path, Path]) -> None:
+    tmp_path, config = isolated_build
+    a = _seed_ready_doc(tmp_path, body="# A\n\nfirst doc.\n")
+    b = _seed_ready_doc(tmp_path, body="# B\n\nsecond doc.\n")
+    rc = main(["rechunk", "--config", str(config), "--all"])
+    assert rc == 0
+    assert _chunk_count(tmp_path, a) >= 1
+    assert _chunk_count(tmp_path, b) >= 1
+
+
+def test_rechunk_unknown_id_returns_nonzero(isolated_build: tuple[Path, Path]) -> None:
+    _, config = isolated_build
+    assert main(["rechunk", "--config", str(config), "9999"]) != 0
+
+
+def test_rechunk_without_id_or_all_returns_usage_error(
+    isolated_build: tuple[Path, Path],
+) -> None:
+    _, config = isolated_build
+    assert main(["rechunk", "--config", str(config)]) == 2

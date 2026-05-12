@@ -1,9 +1,12 @@
-"""Parse-and-persist pipeline shared by upload and retry-parse.
+"""Parse-and-persist pipeline shared by upload, retry-parse, re-chunk.
 
 Spec: parsem-spec.md §17.1, §17.2; AtomicChunkingPhase1.md §Implementation
-Sequence. Tries to ingest a markdown payload through the atomic substrate;
-on parse / build / plan / materialize exception or empty input, marks the
-document `failed` with a human-readable reason and returns False.
+Sequence. `parse_and_persist` ingests a markdown payload through the
+atomic substrate; on parse / build / plan / materialize exception or
+empty input it marks the document `failed` and returns False.
+`reparse_document` re-runs that pipeline on a document's *stored*
+markdown (claude-m4l) — used by both the `retry-parse` route (the
+library "Retry" / "Re-chunk" buttons) and `parsem rechunk`.
 
 The full pipeline (claude-axx):
   text -> DocumentRevision -> ParsedBlock[] -> AtomicPiece[]
@@ -15,17 +18,26 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime
+from pathlib import Path
 
+from parsem.config import PROJECT_ROOT
 from parsem.domain.atomic import build_atomic_pieces, validate_pieces
 from parsem.domain.materialize import derive_sections, materialize_chunks
 from parsem.domain.preprocessed import preprocess_pieces
 from parsem.domain.strategies import ChunkingRuleset, validate_chunk_plan
 from parsem.domain.strategies.current_reading_time import CurrentReadingTimeStrategy
+from parsem.ingest import layout
 from parsem.parse.markdown_parse import parse
 from parsem.store.documents import (
+    delete_document_chunks_and_sections,
     insert_chunking_artifacts,
+    load_document,
     mark_document_failed,
     mark_document_ready,
+)
+from parsem.store.projections_cache import (
+    get_chunk_piece_hashes_for_document,
+    reanchor_reading_state,
 )
 from parsem.store.revisions import insert_revision
 
@@ -83,3 +95,62 @@ def parse_and_persist(
         conn, document_id, total_chunks=len(chunk_records), now=now
     )
     return True
+
+
+def _stored_markdown_path(
+    originals_dir: Path, doc_original_path: str, document_id: int
+) -> Path | None:
+    """Where a document's source markdown lives on disk, or None if it's
+    gone. Normal case: `originals/<id>/document.md`. Fallback: the
+    recorded `original_path` (covers the welcome doc, whose source is the
+    repo's `data/welcome.md` and has no `originals/` directory) — resolved
+    against PROJECT_ROOT when it's relative."""
+    primary = layout.markdown_path(originals_dir, document_id)
+    if primary.exists():
+        return primary
+    recorded = Path(doc_original_path)
+    if not recorded.is_absolute():
+        recorded = PROJECT_ROOT / recorded
+    return recorded if recorded.exists() else None
+
+
+def reparse_document(
+    conn: sqlite3.Connection,
+    *,
+    document_id: int,
+    originals_dir: Path,
+    now: datetime,
+) -> bool:
+    """Re-run the parse/chunk pipeline on a document's stored markdown:
+    capture the old chunks' piece hashes, wipe chunks/sections, re-parse,
+    then re-anchor the reading position onto the new chunks. Returns True
+    on a successful re-chunk; False (with the document marked `failed`)
+    when the markdown is missing or the parse fails. Commits before
+    returning — `parsem rechunk` runs this in a short-lived process, so
+    the writes must be persisted here. Caller verifies the document
+    exists. claude-m4l."""
+    doc = load_document(conn, document_id)
+    if doc is None:
+        return False
+    md_path = _stored_markdown_path(originals_dir, doc.original_path, document_id)
+    if md_path is None:
+        mark_document_failed(
+            conn, document_id, reason="Original file missing.", now=now
+        )
+        conn.commit()
+        return False
+    text = md_path.read_text(encoding="utf-8")
+    # Snapshot the OLD chunks' piece-hash sets before the wipe — needed to
+    # re-anchor reading_state onto the new chunking_run (claude-jtu).
+    old_chunk_piece_hashes = get_chunk_piece_hashes_for_document(conn, document_id)
+    delete_document_chunks_and_sections(conn, document_id)
+    success = parse_and_persist(conn, document_id=document_id, text=text, now=now)
+    if success and old_chunk_piece_hashes:
+        reanchor_reading_state(
+            conn,
+            document_id=document_id,
+            old_chunks_piece_hashes=old_chunk_piece_hashes,
+            now=now,
+        )
+    conn.commit()
+    return success
