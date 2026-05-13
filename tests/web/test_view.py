@@ -122,6 +122,29 @@ def test_render_chunk_html_renders_strikethrough() -> None:
     assert "~~" not in html
 
 
+def test_render_chunk_html_strips_obsidian_wikilinks_to_display_text() -> None:
+    """Obsidian's `[[…]]` syntax isn't CommonMark — pre-strip it to plain
+    text so the reader doesn't show the brackets verbatim (claude-rvv)."""
+    src = (
+        'See [[#3. John Ousterhout|Ousterhout]] for the argument. '
+        'Background: [[Software Design Notes]] and [[Notes#Deep Modules]]; '
+        'cross-ref [[Notes#Composition|composition]] and the [[#Summary]].\n'
+    )
+    html = str(render_chunk_html(src))
+    # `|display` wins when present.
+    assert "Ousterhout" in html
+    assert "composition" in html
+    # Bare `[[Note]]` → "Note".
+    assert "Software Design Notes" in html
+    # `[[Note#Heading]]` → "Note > Heading" (the `>` is HTML-escaped by
+    # markdown-it; the browser shows `>`).
+    assert "Notes &gt; Deep Modules" in html
+    # `[[#Heading]]` → "Heading" (leading `#` for same-note links is dropped).
+    assert "Summary" in html
+    # Brackets are gone.
+    assert "[[" not in html and "]]" not in html
+
+
 def test_render_chunk_html_escapes_raw_html_tags() -> None:
     """commonmark mode keeps html=False — embedded <script> stays as
     text. Single-user app, but defense in depth."""

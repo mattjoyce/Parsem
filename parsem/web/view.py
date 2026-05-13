@@ -6,6 +6,7 @@ Presentation logic only; no IO, no clock, no global state.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
@@ -28,6 +29,25 @@ _RENDERER = MarkdownIt("commonmark", {"html": False}).enable(["table", "striketh
 # owns their corpus — but defense in depth keeps the render layer
 # honest (Parsem-kli).
 
+# Obsidian wikilinks (claude-rvv). markdown-it has no concept of `[[…]]`,
+# so the syntax falls through as literal text in the reader. We pre-strip
+# wikilinks to their display text BEFORE markdown-it sees them — no href,
+# no click, just readable. Chunks in the DB are unchanged.
+# Known limitation: wikilinks inside fenced code blocks also get stripped
+# (rare for Obsidian-source notes; the proper fix is a markdown-it inline
+# rule that respects context).
+_WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
+
+
+def _wikilink_to_text(match: re.Match[str]) -> str:
+    target = match.group(1).strip()
+    display = (match.group(2) or "").strip()
+    if display:
+        return display
+    if target.startswith("#"):
+        return target[1:].strip()
+    return target.replace("#", " > ")
+
 
 @lru_cache(maxsize=2000)
 def render_chunk_html(text: str) -> Markup:
@@ -38,7 +58,7 @@ def render_chunk_html(text: str) -> Markup:
     revealed prefix. Chunk text is immutable, so the same chunk's
     HTML is computed once per process. Bounded cache keeps memory
     flat across multiple opened documents."""
-    return Markup(_RENDERER.render(text))
+    return Markup(_RENDERER.render(_WIKILINK_RE.sub(_wikilink_to_text, text)))
 
 
 # Closing tags we'll inject the inline reveal glyph BEFORE — text-bearing
