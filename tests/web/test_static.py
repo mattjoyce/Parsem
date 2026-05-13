@@ -18,6 +18,14 @@ def test_static_js_is_served(client: TestClient) -> None:
     assert "javascript" in response.headers["content-type"]
 
 
+def test_favicon_svg_is_served(client: TestClient) -> None:
+    """The <link rel="icon"> in reader.html / library.html points here —
+    so the per-page /favicon.ico 404 stops (claude-ucd)."""
+    response = client.get("/static/favicon.svg")
+    assert response.status_code == 200
+    assert "svg" in response.headers["content-type"]
+
+
 # The bead description IS the contract — these key→URL pairs must appear
 # in reader.js. Testing the contract via grep is legitimate; testing the
 # implementation (switch vs Map, regex shape, etc.) would not be.

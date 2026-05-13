@@ -66,11 +66,15 @@ _ABSORBING_CLOSE_TYPES: frozenset[str] = frozenset(
     {"list_item_close", "blockquote_close", "table_close"}
 )
 
-# CommonMark plus the GFM `table` block rule (claude-l51). Without it a
-# pipe-table parses as a plain paragraph and the atomic chunker slices
-# it sentence-by-sentence; with it we get a real `table` block, which
-# `table_atomicity="block"` keeps whole and `_ABSORBING_TYPES` covers.
-_PARSER = MarkdownIt("commonmark").enable("table")
+# CommonMark plus the GFM `table` block rule (claude-l51) and the
+# `strikethrough` inline rule (claude-ucd). `table` matters here because
+# it changes block structure — without it a pipe-table parses as a plain
+# paragraph and the atomic chunker slices it sentence-by-sentence; with
+# it we get a real `table` block, which `table_atomicity="block"` keeps
+# whole and `_ABSORBING_TYPES` covers. `strikethrough` is inline-only so
+# the chunker is indifferent — it's kept here to stay in sync with the
+# renderer (view._RENDERER), which is where it actually shows up.
+_PARSER = MarkdownIt("commonmark").enable(["table", "strikethrough"])
 
 
 def parse(markdown_text: str) -> list[ParsedBlock]:

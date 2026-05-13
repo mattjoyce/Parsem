@@ -176,17 +176,14 @@ def test_failed_row_renders_retry_button_and_reason(
 def test_failed_row_does_not_render_rename_button(
     app_ctx: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
-    """Rename only makes sense for ready docs; the failed branch shows
-    Retry instead of Rename."""
+    """Rename (and Re-chunk) only make sense for ready docs; the failed
+    branch shows Retry instead."""
     client, conn, originals = app_ctx
     doc_id = _seed_failed(conn, originals)
-    body = client.get("/library").text
-    # Find this doc's row and assert there's no rename button inside.
-    row_marker = f'id="library-row-{doc_id}"'
-    row_idx = body.index(row_marker)
-    next_row_idx = body.find('class="library-row"', row_idx + 1)
-    row_html = body[row_idx : next_row_idx if next_row_idx != -1 else len(body)]
+    row_html = _row_html(client.get("/library").text, doc_id)
     assert "library-rename" not in row_html
+    assert "library-rechunk" not in row_html
+    assert "library-retry" in row_html
 
 
 def test_ready_row_does_not_render_retry_button(

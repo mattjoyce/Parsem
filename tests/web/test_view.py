@@ -114,6 +114,14 @@ def test_render_chunk_html_renders_pipe_table() -> None:
     assert "<td>1</td>" in html
 
 
+def test_render_chunk_html_renders_strikethrough() -> None:
+    """`strikethrough` rule is enabled (claude-ucd): `~~text~~` → <s>text</s>,
+    like Obsidian."""
+    html = render_chunk_html("It was ~~deprecated~~ removed.\n")
+    assert "<s>deprecated</s>" in html
+    assert "~~" not in html
+
+
 def test_render_chunk_html_escapes_raw_html_tags() -> None:
     """commonmark mode keeps html=False — embedded <script> stays as
     text. Single-user app, but defense in depth."""
