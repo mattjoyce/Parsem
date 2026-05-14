@@ -92,10 +92,11 @@
     }
   });
 
-  // URL-ingest form (claude-mwx.1) — JSON POST to /ingest. The file
-  // form posts multipart and natively redirects on 302; this one needs
-  // JS to set the correct content-type and refresh the library after
-  // the watcher has had a moment to ingest.
+  // URL-ingest form — POSTs to /ingest/url which submits the URL to
+  // ductile's firecrawl plugin (ADR 0003, bd claude-5fp). The endpoint
+  // returns 202 immediately with a doc_id; the actual scrape lands as
+  // a file in inbound/converted/ shortly after, where the existing
+  // filewatch ingest flips the row to ready.
   const urlForm = document.getElementById("ingest-url-form");
   if (urlForm) {
     urlForm.addEventListener("submit", async (ev) => {
@@ -105,19 +106,31 @@
       const submit = urlForm.querySelector("button[type=submit]");
       if (submit) submit.disabled = true;
       try {
-        const response = await fetch("/ingest", {
+        const response = await fetch("/ingest/url", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url: input.value.trim() }),
         });
         if (!response.ok) {
-          const detail = await response.text();
-          alert("Failed to add URL: " + detail);
+          let reason = "request failed";
+          try {
+            const body = await response.json();
+            if (body && body.detail) {
+              reason = typeof body.detail === "string"
+                ? body.detail
+                : (body.detail.reason || JSON.stringify(body.detail));
+            }
+          } catch (_) {
+            // body not JSON; keep the generic reason
+          }
+          alert("Failed to add URL: " + reason);
           return;
         }
-        // Watcher needs a beat to ingest the dropped file before the
-        // library page re-renders with the new row. 800ms is empirical.
-        setTimeout(() => window.location.reload(), 800);
+        // 202 — the converting row is in the library; reload to show it.
+        // Brief delay so the row renders with the placeholder; firecrawl
+        // will then flip it to ready when the .md lands and filewatch
+        // catches up.
+        setTimeout(() => window.location.reload(), 400);
       } finally {
         if (submit) submit.disabled = false;
       }

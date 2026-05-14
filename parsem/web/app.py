@@ -16,8 +16,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from parsem.config import IngestSettings, PresentationSettings
-from parsem.ingest.url_fetch import DEFAULT_MAX_BYTES, DEFAULT_TIMEOUT_SECONDS
+from parsem.config import DuctileSettings, IngestSettings, PresentationSettings
 from parsem.web.routes.arrivals import router as arrivals_router
 from parsem.web.routes.assets import router as assets_router
 from parsem.web.routes.ingest import router as ingest_router
@@ -36,8 +35,10 @@ def create_app(
     db: sqlite3.Connection,
     originals_dir: Path,
     inbound_raw_dir: Path | None = None,
+    inbound_converted_dir: Path | None = None,
     ingest_settings: IngestSettings | None = None,
     presentation_settings: PresentationSettings | None = None,
+    ductile_settings: DuctileSettings | None = None,
 ) -> FastAPI:
     """Build the FastAPI app wired to a ReaderState plus the SQLite
     connection and the on-disk paths. Callers (CLI + tests) own
@@ -46,22 +47,26 @@ def create_app(
 
     `presentation_settings` supplies the reader's no-localStorage
     appearance defaults (spec §15.3, claude-rdk); when omitted the
-    shipped defaults are used (tests that don't care about it)."""
+    shipped defaults are used (tests that don't care about it).
+
+    `ductile_settings` is the gateway endpoint for user-initiated URL
+    submission via `/ingest/url` (ADR 0003, bd claude-5fp). When the
+    base_url is empty, `/ingest/url` returns 502 with a clear reason —
+    URL ingest is disabled, but the rest of the app works fine."""
     raw_dir = inbound_raw_dir or originals_dir.parent / "inbound" / "raw"
+    converted_dir = inbound_converted_dir or originals_dir.parent / "inbound" / "converted"
 
     app = FastAPI(title="Parsem", docs_url=None, redoc_url=None)
     app.state.reader = state
     app.state.db = db
     app.state.originals_dir = originals_dir
     app.state.inbound_raw_dir = raw_dir
-    app.state.url_timeout_seconds = (
-        ingest_settings.url_timeout_seconds if ingest_settings else DEFAULT_TIMEOUT_SECONDS
-    )
-    app.state.url_max_bytes = (
-        ingest_settings.url_max_bytes if ingest_settings else DEFAULT_MAX_BYTES
-    )
+    app.state.inbound_converted_dir = converted_dir
     app.state.ingest_callback_token = (
         ingest_settings.callback_token if ingest_settings else ""
+    )
+    app.state.ductile_settings = ductile_settings or DuctileSettings(
+        base_url="", api_token=""
     )
     app.state.presentation = presentation_settings or PresentationSettings.default()
     app.state.templates = Jinja2Templates(directory=_TEMPLATES_DIR)

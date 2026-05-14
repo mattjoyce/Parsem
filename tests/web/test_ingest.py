@@ -1,11 +1,12 @@
-"""Tests for the ingest pipeline (claude-mwx.1 + claude-mwx.2 + claude-als).
+"""Tests for the ingest pipeline (claude-mwx.1 + claude-mwx.2 + claude-als + claude-5fp).
 
-POST /ingest writes a drop to inbound/raw/. The form-file branch then
-runs `process_raw_arrival` inline (self-ingest — no ductile watcher in
-a standalone server); the JSON {url} branch stays watcher-driven and
-returns 202. Tests here cover the route surface (content-type dispatch,
-redirect/JSON shapes, self-ingest, dedup, filename sanitization) and
-round-trip via the arrivals core.
+`POST /ingest` (multipart) handles file uploads; `.md` is self-ingested,
+`.pdf` is queued for ductile/Marker. The legacy JSON `{url}` branch of
+this route was retired in claude-5fp and now returns 410 Gone.
+
+`POST /ingest/url` (claude-5fp) is the user-initiated URL submission
+endpoint: inserts a `converting` row and POSTs to ductile's firecrawl
+plugin via `submit_url`. ADR 0003.
 """
 
 from __future__ import annotations
@@ -19,9 +20,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from parsem.cli import RESUME_WARM_CHUNKS_DEFAULT
+from parsem.config import DuctileSettings
 from parsem.ingest import layout
 from parsem.ingest.arrivals import process_raw_arrival
-from parsem.ingest.url_fetch import FetchedFile
+from parsem.ingest.ductile_client import DuctileError
 from parsem.store.db import connect, migrate
 from parsem.store.documents import load_document
 from parsem.web.app import create_app
@@ -38,13 +40,18 @@ def fresh_app(tmp_path: Path) -> Iterator[tuple[TestClient, sqlite3.Connection, 
     library = tmp_path / "library"
     originals = library / "originals"
     raw = library / "inbound" / "raw"
-    for d in (originals, raw):
+    converted = library / "inbound" / "converted"
+    for d in (originals, raw, converted):
         d.mkdir(parents=True, exist_ok=True)
     app = create_app(
         empty_reader_state(conn),
         db=conn,
         originals_dir=originals,
         inbound_raw_dir=raw,
+        inbound_converted_dir=converted,
+        ductile_settings=DuctileSettings(
+            base_url="http://fake-ductile:8888", api_token=""
+        ),
     )
     with TestClient(app) as client:
         yield client, conn, originals
@@ -142,21 +149,138 @@ def test_post_ingest_file_with_no_file_returns_400(
     assert response.status_code == 400
 
 
-def test_post_ingest_url_writes_fetched_bytes_to_inbound_raw(
+def test_legacy_post_ingest_json_url_returns_410(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
-    """JSON {url} POST → fetcher invoked → bytes written to inbound/raw/
-    → 202 with the queued filename."""
-    client, _, originals = fresh_app
-    fetched = FetchedFile(content=b"# from-url\n", suggested_filename="article.md")
-    with patch("parsem.web.routes.ingest.fetch", return_value=fetched):
+    """The legacy JSON `{url}` branch of POST /ingest was retired in
+    claude-5fp. Programmatic callers still using it should see 410 Gone
+    with a hint pointing at /ingest/url, not silent success."""
+    client, conn, _ = fresh_app
+    response = client.post("/ingest", json={"url": "https://example.com/article.md"})
+    assert response.status_code == 410
+    assert "/ingest/url" in response.text
+    # No documents row was created.
+    (count,) = conn.execute("SELECT COUNT(*) FROM documents").fetchone()
+    assert count == 0
+
+
+# /ingest/url — user-initiated URL submission via firecrawl (claude-5fp)
+# ─────────────────────────────────────────────────────────────
+
+
+def test_post_ingest_url_happy_path_creates_converting_row(
+    fresh_app: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """Valid URL → ductile submit succeeds → 202 with document_id and
+    a `converting` documents row exists with source_type='url' and
+    original_path set to the submitted URL."""
+    client, conn, _ = fresh_app
+    with patch(
+        "parsem.ingest.url_submit.submit_firecrawl_scrape", return_value=None
+    ) as mock_submit:
         response = client.post(
-            "/ingest", json={"url": "https://example.com/article.md"}
+            "/ingest/url", json={"url": "https://example.com/regulation"}
         )
     assert response.status_code == 202
-    assert response.json() == {"queued": "article.md"}
-    raw_dir = originals.parent / "inbound" / "raw"
-    assert (raw_dir / "article.md").read_bytes() == b"# from-url\n"
+    body = response.json()
+    assert "document_id" in body and isinstance(body["document_id"], int)
+    assert body["doc_id"] == str(body["document_id"])
+    assert body["action"] == "submitted"
+    # Plugin was called with the right payload shape.
+    mock_submit.assert_called_once()
+    call_kwargs = mock_submit.call_args.kwargs
+    assert call_kwargs["url"] == "https://example.com/regulation"
+    assert call_kwargs["doc_id"] == str(body["document_id"])
+    # Row exists with status=converting.
+    doc = load_document(conn, body["document_id"])
+    assert doc is not None
+    assert doc.status == "converting"
+    assert doc.source_type == "url"
+    assert doc.original_path == "https://example.com/regulation"
+
+
+def test_post_ingest_url_rolls_back_on_ductile_failure(
+    fresh_app: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """Ductile call raises → endpoint returns 502 AND no leaked
+    `converting` row in the DB. The rollback is the whole point."""
+    client, conn, _ = fresh_app
+    with patch(
+        "parsem.ingest.url_submit.submit_firecrawl_scrape",
+        side_effect=DuctileError("ductile 5xx: 503", kind="response", ductile_status=503),
+    ):
+        response = client.post(
+            "/ingest/url", json={"url": "https://example.com/x"}
+        )
+    assert response.status_code == 502
+    (count,) = conn.execute("SELECT COUNT(*) FROM documents").fetchone()
+    assert count == 0
+
+
+def test_post_ingest_url_missing_url_returns_400(
+    fresh_app: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """Empty body / missing url → 400 BEFORE any DB write."""
+    client, conn, _ = fresh_app
+    response = client.post("/ingest/url", json={})
+    assert response.status_code == 400
+    (count,) = conn.execute("SELECT COUNT(*) FROM documents").fetchone()
+    assert count == 0
+
+
+def test_post_ingest_url_bad_scheme_returns_400(
+    fresh_app: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    """file:// and other non-http(s) schemes → 400 before DB write.
+    SSRF defence at the input boundary."""
+    client, conn, _ = fresh_app
+    for bad_url in ("file:///etc/passwd", "ftp://example.com", "javascript:alert(1)"):
+        response = client.post("/ingest/url", json={"url": bad_url})
+        assert response.status_code == 400, f"expected 400 for {bad_url!r}"
+    (count,) = conn.execute("SELECT COUNT(*) FROM documents").fetchone()
+    assert count == 0
+
+
+def test_post_ingest_url_invalid_json_returns_400(
+    fresh_app: tuple[TestClient, sqlite3.Connection, Path],
+) -> None:
+    client, _, _ = fresh_app
+    response = client.post(
+        "/ingest/url",
+        content=b"not json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert response.status_code == 400
+
+
+def test_post_ingest_url_with_unconfigured_ductile_returns_502(
+    tmp_path: Path,
+) -> None:
+    """If ductile.base_url is empty, URL ingest is disabled — caller
+    gets a 502 with a clear reason rather than silent breakage."""
+    conn = connect(":memory:")
+    migrate(conn)
+    library = tmp_path / "library"
+    originals = library / "originals"
+    raw = library / "inbound" / "raw"
+    converted = library / "inbound" / "converted"
+    for d in (originals, raw, converted):
+        d.mkdir(parents=True, exist_ok=True)
+    app = create_app(
+        empty_reader_state(conn),
+        db=conn,
+        originals_dir=originals,
+        inbound_raw_dir=raw,
+        inbound_converted_dir=converted,
+        ductile_settings=DuctileSettings(base_url="", api_token=""),
+    )
+    with TestClient(app) as client:
+        response = client.post(
+            "/ingest/url", json={"url": "https://example.com/x"}
+        )
+    assert response.status_code == 502
+    (count,) = conn.execute("SELECT COUNT(*) FROM documents").fetchone()
+    assert count == 0
 
 
 def test_post_ingest_dedups_repeated_uploads(

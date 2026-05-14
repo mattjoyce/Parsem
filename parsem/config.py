@@ -74,6 +74,13 @@ ingest:
   # means accept any caller — useful in dev; set in prod.
   callback_token: ${PARSEM_INGEST_TOKEN:-}
 
+ductile:
+  # Outbound calls to the ductile gateway (ADR 0003, user-initiated only).
+  # Used by /ingest/url to submit URL scrape jobs to the firecrawl plugin
+  # (bd claude-5fp). Empty base_url disables URL ingest with a clear error.
+  base_url: ${PARSEM_DUCTILE_BASE_URL:-}
+  api_token: ${PARSEM_DUCTILE_TOKEN:-}
+
 presentation:
   # The reader's appearance. theme/density/width/size are also
   # overridable per-browser via the in-reader "Aa" / "," panel (stored
@@ -132,6 +139,16 @@ class IngestSettings:
     url_timeout_seconds: float
     url_max_bytes: int
     callback_token: str  # empty string = no auth (dev); set = require match
+
+
+@dataclass(frozen=True)
+class DuctileSettings:
+    """Outbound ductile gateway settings for user-initiated URL submission
+    (ADR 0003, bd claude-5fp). Empty `base_url` disables URL ingest with
+    a clear error rather than silently dropping submissions."""
+
+    base_url: str  # e.g. "http://localhost:8888"; empty = disabled
+    api_token: str  # bearer for the outbound call; empty = no auth header
 
 
 @dataclass(frozen=True)
@@ -206,6 +223,7 @@ class Settings:
     server: ServerSettings
     ingest: IngestSettings
     presentation: PresentationSettings
+    ductile: DuctileSettings
 
 
 def resolve_config_path(explicit: Path | str | None = None) -> Path:
@@ -268,6 +286,10 @@ def _settings_from_dict(raw: dict[str, Any]) -> Settings:
             callback_token=str(get(raw, "ingest.callback_token", "") or ""),
         ),
         presentation=_presentation_from_dict(raw),
+        ductile=DuctileSettings(
+            base_url=str(get(raw, "ductile.base_url", "") or ""),
+            api_token=str(get(raw, "ductile.api_token", "") or ""),
+        ),
     )
 
 

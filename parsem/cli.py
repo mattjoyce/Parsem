@@ -35,7 +35,7 @@ from parsem.config import (
     load_settings,
 )
 from parsem.ingest.paths import unique_inbound_path
-from parsem.ingest.url_fetch import UrlFetchError, fetch
+from parsem.ingest.url_submit import UrlSubmitError, submit_url
 from parsem.store.db import connect, migrate
 from parsem.store.documents import insert_document, load_document
 from parsem.web.app import create_app
@@ -100,8 +100,10 @@ def build_app(
         db=conn,
         originals_dir=resolved_paths.originals_dir,
         inbound_raw_dir=resolved_paths.inbound_raw_dir,
+        inbound_converted_dir=resolved_paths.inbound_converted_dir,
         ingest_settings=settings.ingest if settings else None,
         presentation_settings=settings.presentation if settings else None,
+        ductile_settings=settings.ductile if settings else None,
     )
 
 
@@ -115,35 +117,40 @@ def _cmd_serve(args: argparse.Namespace, *, runner: Callable[..., Any]) -> int:
 
 
 def _cmd_add(args: argparse.Namespace) -> int:
-    """`parsem add <url|file>` — drop into inbound/raw/ without going
-    through the server. Ductile's folderwatch on inbound/raw/ knocks
-    Parsem to ingest (ADR 0002). If ductile isn't watching, the file
-    waits in inbound/raw/ until ductile catches up."""
+    """`parsem add <url|file>`.
+
+    - File path: copy into inbound/raw/. Ductile's folderwatch on
+      inbound/raw/ knocks Parsem to ingest (ADR 0002).
+    - URL: submit to ductile's firecrawl plugin via `submit_url`
+      (ADR 0003, bd claude-5fp). The plugin writes <doc_id>.md to
+      inbound/converted/, where filewatch ingests it.
+    """
     settings = load_settings(args.config)
     paths = settings.paths
     ensure_library_layout(paths)
-    target_dir = paths.inbound_raw_dir
     source = args.target
 
     if source.startswith(("http://", "https://")):
+        conn = connect(paths.db_path)
+        migrate(conn)
         try:
-            fetched = fetch(
+            result = submit_url(
                 source,
-                timeout_seconds=settings.ingest.url_timeout_seconds,
-                max_bytes=settings.ingest.url_max_bytes,
+                conn=conn,
+                settings=settings.ductile,
+                inbound_converted_dir=paths.inbound_converted_dir,
             )
-        except UrlFetchError as exc:
-            print(f"error: {exc}", file=sys.stderr)
+        except UrlSubmitError as exc:
+            print(f"error ({exc.kind}): {exc.reason}", file=sys.stderr)
             return 2
-        target = unique_inbound_path(target_dir, fetched.suggested_filename)
-        target.write_bytes(fetched.content)
-        print(f"queued: {target.name}")
+        print(f"submitted: doc_id={result.doc_id}")
         return 0
 
     src_path = Path(source).expanduser().resolve()
     if not src_path.is_file():
         print(f"error: not a file: {src_path}", file=sys.stderr)
         return 2
+    target_dir = paths.inbound_raw_dir
     target = unique_inbound_path(target_dir, src_path.name)
     shutil.copy2(src_path, target)
     print(f"queued: {target.name}")
