@@ -187,7 +187,7 @@ def test_request_targets_firecrawl_scrape_path(tmp_path: Path) -> None:
         )
     call_args = mock_client.post.call_args
     url_arg = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
-    assert url_arg == "http://gateway:8888/plugin/firecrawl/scrape"
+    assert url_arg == "http://gateway:8888/plugin/firecrawl/handle"
     body = call_args.kwargs["json"]
     assert body == {
         "payload": {

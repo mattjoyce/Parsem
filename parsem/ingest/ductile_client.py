@@ -16,7 +16,7 @@ import httpx
 from parsem.config import DuctileSettings
 
 DEFAULT_TIMEOUT_SECONDS = 5.0
-FIRECRAWL_PLUGIN_PATH = "/plugin/firecrawl/scrape"
+FIRECRAWL_PLUGIN_PATH = "/plugin/firecrawl/handle"
 
 DuctileErrorKind = Literal["config", "transport", "response"]
 
