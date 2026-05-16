@@ -61,7 +61,7 @@ def post_raw_arrived(
 ) -> JSONResponse:
     """Ductile knocks here when something lands in inbound/raw/. The
     response carries the closed action vocabulary (`ingested`,
-    `submit_to_marker`, `duplicate`, `unsupported`); the ductile DSL
+    `submit_to_docling`, `duplicate`, `unsupported`); the ductile DSL
     branches on it. Path is read from the bind-mounted NAS share —
     Parsem and ductile must agree on the path namespace."""
     result = process_raw_arrival(

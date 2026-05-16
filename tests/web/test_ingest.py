@@ -123,9 +123,9 @@ def test_post_ingest_pdf_is_queued_not_self_ingested(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
     """A .pdf upload is left in inbound/raw/ for the watcher — NOT run
-    through process_raw_arrival here, which would `submit_to_marker`
+    through process_raw_arrival here, which would `submit_to_docling`
     (moving the PDF to originals/<id>/source.pdf) but leave nobody to
-    dispatch Marker. claude-als."""
+    dispatch the docling-pdf plugin. claude-als."""
     client, conn, originals = fresh_app
     response = client.post(
         "/ingest",
@@ -344,17 +344,17 @@ def test_process_raw_arrival_ingests_md_and_moves_to_originals(
     assert doc.title == "drop"
 
 
-def test_process_raw_arrival_pdf_stages_for_marker(
+def test_process_raw_arrival_pdf_stages_for_docling(
     fresh_app: tuple[TestClient, sqlite3.Connection, Path],
 ) -> None:
     """A .pdf gets a converting row, moves to originals/<id>/source.pdf,
-    and returns submit_to_marker so ductile knows to call Marker."""
+    and returns submit_to_docling so ductile knows to call docling-pdf."""
     _client, conn, originals = fresh_app
     raw = originals.parent / "inbound" / "raw"
     src = raw / "doc.pdf"
     src.write_bytes(b"%PDF-1.4 ...")
     result = process_raw_arrival(src, conn=conn, originals_dir=originals)
-    assert result.action == "submit_to_marker"
+    assert result.action == "submit_to_docling"
     assert result.document_id is not None
     assert result.doc_id == str(result.document_id)
     expected_source = layout.source_path(originals, result.document_id, ".pdf")

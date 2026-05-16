@@ -61,8 +61,8 @@ async def post_ingest(
     # draining inbound/raw/, so run the arrival handler now (idempotent —
     # a later ductile knock for the same file dedups on content hash).
     # A .pdf is left queued: process_raw_arrival on it returns
-    # `submit_to_marker` (and moves it to originals/<id>/source.pdf) — and
-    # only ductile can dispatch Marker. claude-als.
+    # `submit_to_docling` (and moves it to originals/<id>/source.pdf) —
+    # and only ductile can dispatch the docling-pdf plugin. claude-als.
     if target.suffix.lower() == ".md":
         process_raw_arrival(
             target,

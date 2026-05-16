@@ -7,23 +7,25 @@ Two functions, one per direction of the seam:
   lands in `inbound/raw/`. Returns a `RawArrivalResult` whose `action`
   tells the caller (the ductile DSL) what to do next:
 
-    * `ingested`         — `.md`; we parsed and persisted in place
-    * `submit_to_marker` — `.pdf`; we inserted a converting row, moved
+    * `ingested`          — `.md`; we parsed and persisted in place
+    * `submit_to_docling` — `.pdf`; we inserted a converting row, moved
                             the PDF to originals/<id>/source.pdf for a
-                            stable bind-mount source, and want ductile
-                            to call Marker with doc_id + source_path
-    * `duplicate`        — content hash already in the library; no-op
-    * `unsupported`      — anything else; recorded as a fail-row so the
+                            stable source path, and want ductile to call
+                            the docling-pdf plugin with doc_id +
+                            source_path
+    * `duplicate`         — content hash already in the library; no-op
+    * `unsupported`       — anything else; recorded as a fail-row so the
                             user sees their drop landed and didn't take
 
-- `process_converted_arrival(path, ...)` — ductile knocks here when
-  Marker drops a `<doc_id>.md` into `inbound/converted/`. We load the
-  existing converting row (filename carries the doc_id), relocate
-  Marker's cluster (`<doc_id>.md`, `<doc_id>.json`, `<doc_id>_images/`)
-  into `originals/<doc_id>/` as `document.md` / `extraction.json` /
-  `images/` — rewriting the markdown's image refs from `<doc_id>_images/`
-  to `images/` — then parse it via parse_and_persist and record the
-  sidecar metadata as an extraction_runs row.
+- `process_converted_arrival(path, ...)` — ductile knocks here when the
+  docling-pdf plugin drops a `<doc_id>.md` into `inbound/converted/`. We
+  load the existing converting row (filename carries the doc_id),
+  relocate the converted cluster (`<doc_id>.md`, `<doc_id>.json`, and a
+  `<doc_id>_images/` dir if one was produced) into `originals/<doc_id>/`
+  as `document.md` / `extraction.json` / `images/` — rewriting the
+  markdown's image refs from `<doc_id>_images/` to `images/` — then
+  parse it via parse_and_persist and record the sidecar metadata as an
+  extraction_runs row.
 
 A stored document is a directory (`originals/<doc_id>/`), not a
 file-prefix cluster — see `parsem.ingest.layout`.
@@ -63,12 +65,12 @@ from parsem.web.ingest import parse_and_persist
 
 _LOG = logging.getLogger(__name__)
 
-# What we accept on the raw side. PDF goes to Marker; MD ingests in
+# What we accept on the raw side. PDF goes to docling; MD ingests in
 # place. Anything else is unsupported. Kept as sets for cheap membership.
 _MD_EXTS = {".md"}
 _PDF_EXTS = {".pdf"}
 
-RawAction = Literal["ingested", "submit_to_marker", "duplicate", "unsupported"]
+RawAction = Literal["ingested", "submit_to_docling", "duplicate", "unsupported"]
 ConvertedAction = Literal["ingested", "duplicate", "missing_doc", "failed"]
 
 
@@ -79,8 +81,8 @@ class RawArrivalResult:
 
     action: RawAction
     document_id: int | None
-    # Only set when action == "submit_to_marker": ductile uses these
-    # two fields to call the Marker plugin's submit endpoint.
+    # Only set when action == "submit_to_docling": ductile uses these
+    # two fields to call the docling-pdf plugin's handle endpoint.
     doc_id: str | None = None
     source_path: str | None = None
     reason: str | None = None
@@ -142,7 +144,7 @@ def process_raw_arrival(
             source_hash=source_hash, now=now_factory(),
         )
     if suffix in _PDF_EXTS:
-        return _stage_pdf_for_marker(
+        return _stage_pdf_for_docling(
             path, conn=conn, originals_dir=originals_dir,
             source_hash=source_hash, now=now_factory(),
         )
@@ -192,7 +194,7 @@ def _ingest_markdown(
     return RawArrivalResult(action="ingested", document_id=document_id)
 
 
-def _stage_pdf_for_marker(
+def _stage_pdf_for_docling(
     path: Path,
     *,
     conn: sqlite3.Connection,
@@ -201,8 +203,8 @@ def _stage_pdf_for_marker(
     now: datetime,
 ) -> RawArrivalResult:
     """Insert a converting row and move the PDF into the document's
-    directory as `source.pdf` — a stable path Marker can bind-mount and
-    the provenance copy cycle 3's re-ingest button will re-convert from.
+    directory as `source.pdf` — a stable path the docling-pdf plugin
+    reads from and cycle 3's re-ingest button will re-convert from.
     The converted markdown lands alongside it as `document.md` once
     `process_converted_arrival` fires."""
     title = path.stem
@@ -233,7 +235,7 @@ def _stage_pdf_for_marker(
             action="unsupported", document_id=document_id, reason=str(exc)
         )
     return RawArrivalResult(
-        action="submit_to_marker",
+        action="submit_to_docling",
         document_id=document_id,
         doc_id=str(document_id),
         source_path=str(target),
@@ -281,10 +283,11 @@ def process_converted_arrival(
     originals_dir: Path,
     now_factory: Callable[[], datetime] = _now_factory,
 ) -> ConvertedArrivalResult:
-    """Synchronous core for `/ingest/converted-arrived`. Marker writes
-    `<doc_id>.md` last under its atomic-write contract, so by the time
-    ductile filewatch fires this knock the `.md`, sidecar `.json`, and
-    `<doc_id>_images/` directory are all in place.
+    """Synchronous core for `/ingest/converted-arrived`. The docling-pdf
+    plugin writes `<doc_id>.md` last under its atomic-write contract, so
+    by the time ductile filewatch fires this knock the `.md` and sidecar
+    `.json` (and a `<doc_id>_images/` dir, if one was produced) are all
+    in place.
 
     We relocate that cluster into `originals/<doc_id>/` — `document.md`,
     `extraction.json`, `images/` — rewriting the markdown's image refs
@@ -324,19 +327,19 @@ def process_converted_arrival(
     now = now_factory()
     try:
         raw_text = path.read_text(encoding="utf-8")
-        # Marker emits image refs as `<doc_id>_images/<file>`; once the
-        # dir lands at `originals/<doc_id>/images/` the refs need to say
-        # `images/<file>` so the reader's <img src> resolves under
-        # /documents/{id}/images/. Specific enough a string that a blind
-        # replace is safe.
+        # If the converter emitted image refs as `<doc_id>_images/<file>`,
+        # once the dir lands at `originals/<doc_id>/images/` the refs need
+        # to say `images/<file>` so the reader's <img src> resolves under
+        # /documents/{id}/images/. The token is specific enough that a
+        # blind replace is safe even when there are no such refs.
         markdown_text = raw_text.replace(
             f"{document_id}_{layout.IMAGES_DIRNAME}/", f"{layout.IMAGES_DIRNAME}/"
         )
-        # Marker's atomic-write contract: <doc_id>.md is renamed last,
-        # so by here the sidecar is already in place. Tolerate a missing
-        # sidecar though — Marker is allowed to win without one.
+        # Atomic-write contract: <doc_id>.md is renamed last, so by here
+        # the sidecar is already in place. Tolerate a missing sidecar
+        # though — the converter is allowed to win without one.
         sidecar = _read_sidecar(path)
-        _relocate_marker_cluster(path, originals_dir, document_id, markdown_text)
+        _relocate_converted_cluster(path, originals_dir, document_id, markdown_text)
         new_md_path = layout.markdown_path(originals_dir, document_id)
         update_document_original_path(
             conn, document_id, original_path=str(new_md_path), now=now
@@ -346,12 +349,18 @@ def process_converted_arrival(
                 conn,
                 document_id=document_id,
                 source_type="pdf",
-                extractor_name="marker",
-                extractor_version=str(sidecar.get("marker_version", "unknown")),
+                extractor_name="docling",
+                extractor_version=str(sidecar.get("docling_version", "unknown")),
                 source_path=str(sidecar.get("source", "")),
                 params={
-                    "duration_seconds": sidecar.get("duration_seconds"),
-                    "image_count": sidecar.get("image_count"),
+                    "docling_pdf_version": sidecar.get("docling_pdf_version"),
+                    "llm_provider": sidecar.get("llm_provider"),
+                    "llm_model": sidecar.get("llm_model"),
+                    "polish_prompt_version": sidecar.get("polish_prompt_version"),
+                    "page_count": sidecar.get("page_count"),
+                    "parse_duration_seconds": sidecar.get("parse_duration_seconds"),
+                    "polish_duration_seconds": sidecar.get("polish_duration_seconds"),
+                    "polish_skipped_reason": sidecar.get("polish_skipped_reason"),
                     "completed_at": sidecar.get("completed_at"),
                 },
                 now=now,
@@ -371,17 +380,18 @@ def process_converted_arrival(
     return ConvertedArrivalResult(action="ingested", document_id=document_id)
 
 
-def _relocate_marker_cluster(
+def _relocate_converted_cluster(
     md_path: Path,
     originals_dir: Path,
     document_id: int,
     markdown_text: str,
 ) -> None:
-    """Move Marker's `inbound/converted/` output into the document's
-    directory: `<doc_id>_images/` → `images/`, `<doc_id>.json` →
-    `extraction.json`, and the (ref-rewritten) markdown → `document.md`.
-    The staging `.md` is removed last. `originals/<doc_id>/` already
-    exists from the PDF-staging step (it holds `source.pdf`)."""
+    """Move the converter's `inbound/converted/` output into the
+    document's directory: `<doc_id>_images/` → `images/` (if present),
+    `<doc_id>.json` → `extraction.json`, and the (ref-rewritten)
+    markdown → `document.md`. The staging `.md` is removed last.
+    `originals/<doc_id>/` already exists from the PDF-staging step (it
+    holds `source.pdf`)."""
     doc_dir = layout.document_dir(originals_dir, document_id)
     doc_dir.mkdir(parents=True, exist_ok=True)
 
@@ -400,9 +410,10 @@ def _relocate_marker_cluster(
 
 
 def _doc_id_from_filename(path: Path) -> int | None:
-    """Marker writes `<doc_id>.md` where doc_id is the integer Parsem
-    handed it at submit. Anything else is a sign the filewatch caught
-    a file that isn't ours — return None and let the caller fail."""
+    """The docling-pdf plugin writes `<doc_id>.md` where doc_id is the
+    integer Parsem handed it at submit. Anything else is a sign the
+    filewatch caught a file that isn't ours — return None and let the
+    caller fail."""
     try:
         return int(path.stem)
     except ValueError:

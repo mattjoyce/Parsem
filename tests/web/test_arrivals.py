@@ -2,8 +2,8 @@
 (the ductile-driven ingest seam — ADR 0002).
 
 Endpoint coverage: action vocabulary, bearer-token auth, and the
-PDF→Marker round-trip simulated end-to-end (raw-arrived stages the
-PDF; we manually drop a converted .md + sidecar to mimic Marker;
+PDF→docling round-trip simulated end-to-end (raw-arrived stages the
+PDF; we manually drop a converted .md + sidecar to mimic docling-pdf;
 converted-arrived completes the document).
 """
 
@@ -88,7 +88,7 @@ def test_raw_arrived_md_returns_ingested(
     assert layout.markdown_path(originals, body["document_id"]).exists()
 
 
-def test_raw_arrived_pdf_returns_submit_to_marker(
+def test_raw_arrived_pdf_returns_submit_to_docling(
     app_open: tuple[TestClient, sqlite3.Connection, Path, Path, Path],
 ) -> None:
     client, conn, originals, raw, _ = app_open
@@ -97,7 +97,7 @@ def test_raw_arrived_pdf_returns_submit_to_marker(
     response = client.post("/ingest/raw-arrived", json={"path": str(src)})
     assert response.status_code == 200
     body = response.json()
-    assert body["action"] == "submit_to_marker"
+    assert body["action"] == "submit_to_docling"
     assert body["doc_id"] == str(body["document_id"])
     expected_source = layout.source_path(originals, body["document_id"], ".pdf")
     assert body["source_path"] == str(expected_source)
@@ -197,7 +197,7 @@ def test_arrivals_with_token_accepts_correct_token(
 # ─── /ingest/converted-arrived ────────────────────────────────────────
 
 
-def _drop_marker_output(
+def _drop_converted_output(
     converted_dir: Path,
     *,
     doc_id: int,
@@ -205,10 +205,11 @@ def _drop_marker_output(
     sidecar: dict,
     images: dict[str, bytes] | None = None,
 ) -> Path:
-    """Simulate Marker's output cluster under its atomic-write contract:
-    images dir first, sidecar JSON next, the .md last. `images` maps a
-    filename to bytes; the dir is named `<doc_id>_images/` to match the
-    Marker contract (image refs in the markdown point at that name)."""
+    """Simulate the converter's output cluster under its atomic-write
+    contract: images dir first (if any), sidecar JSON next, the .md last.
+    `images` maps a filename to bytes; the dir is named `<doc_id>_images/`
+    so the image-ref-rewrite path still has a cluster to exercise even
+    though docling-pdf currently emits no images."""
     if images:
         img_dir = converted_dir / f"{doc_id}_images"
         img_dir.mkdir()
@@ -220,16 +221,21 @@ def _drop_marker_output(
     return md_path
 
 
-def _marker_sidecar(doc_id: int, **overrides: object) -> dict:
+def _docling_sidecar(doc_id: int, **overrides: object) -> dict:
     base = {
         "doc_id": str(doc_id),
         "status": "ready",
         "source": "/input/in.pdf",
-        "output_md": f"/output/{doc_id}.md",
-        "marker_version": "1.10.2",
-        "duration_seconds": 599.5,
-        "image_count": 0,
-        "completed_at": "2026-05-10T10:25:55+00:00",
+        "docling_pdf_version": "0.1.0",
+        "docling_version": "2.0.0",
+        "llm_provider": "gemini",
+        "llm_model": "gemini-2.5-pro",
+        "polish_prompt_version": "v1",
+        "page_count": 12,
+        "parse_duration_seconds": 4.2,
+        "polish_duration_seconds": 9.5,
+        "polish_skipped_reason": None,
+        "completed_at": "2026-05-16T10:25:55+00:00",
     }
     base.update(overrides)
     return base
@@ -238,20 +244,20 @@ def _marker_sidecar(doc_id: int, **overrides: object) -> dict:
 def test_converted_arrived_completes_pdf_round_trip(
     app_open: tuple[TestClient, sqlite3.Connection, Path, Path, Path],
 ) -> None:
-    """Full PDF flow: raw-arrived stages, marker drop, converted-arrived
+    """Full PDF flow: raw-arrived stages, docling drop, converted-arrived
     relocates the cluster into originals/<id>/ and flips to ready."""
     client, conn, originals, raw, converted = app_open
     pdf = raw / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4\n...")
     submit_resp = client.post("/ingest/raw-arrived", json={"path": str(pdf)}).json()
     doc_id = submit_resp["document_id"]
-    assert submit_resp["action"] == "submit_to_marker"
+    assert submit_resp["action"] == "submit_to_docling"
 
-    md_path = _drop_marker_output(
+    md_path = _drop_converted_output(
         converted,
         doc_id=doc_id,
         md_text="# Paper\n\nConverted body.\n",
-        sidecar=_marker_sidecar(doc_id),
+        sidecar=_docling_sidecar(doc_id),
     )
     response = client.post(
         "/ingest/converted-arrived", json={"path": str(md_path)}
@@ -270,25 +276,29 @@ def test_converted_arrived_completes_pdf_round_trip(
     assert layout.source_path(originals, doc_id, ".pdf").exists()  # from staging
     assert not md_path.exists()
 
-    # extraction_runs row carries marker_version + duration
+    # extraction_runs row carries docling_version + durations
     rows = conn.execute(
         "SELECT extractor_name, extractor_version, params_json"
         " FROM extraction_runs WHERE document_id=?",
         (doc_id,),
     ).fetchall()
     assert len(rows) == 1
-    assert rows[0]["extractor_name"] == "marker"
-    assert rows[0]["extractor_version"] == "1.10.2"
+    assert rows[0]["extractor_name"] == "docling"
+    assert rows[0]["extractor_version"] == "2.0.0"
     params = json.loads(rows[0]["params_json"])
-    assert params["duration_seconds"] == 599.5
+    assert params["parse_duration_seconds"] == 4.2
+    assert params["polish_duration_seconds"] == 9.5
+    assert params["llm_model"] == "gemini-2.5-pro"
+    assert params["page_count"] == 12
 
 
 def test_converted_arrived_relocates_images_and_rewrites_refs(
     app_open: tuple[TestClient, sqlite3.Connection, Path, Path, Path],
 ) -> None:
-    """Marker's <doc_id>_images/ lands at originals/<id>/images/, and the
+    """A <doc_id>_images/ cluster lands at originals/<id>/images/, and the
     markdown's `![](<doc_id>_images/x.jpeg)` refs are rewritten to
-    `images/x.jpeg` (and persisted that way)."""
+    `images/x.jpeg` (and persisted that way). docling-pdf emits no images
+    today; this guards the relocation path for converters that do."""
     client, conn, originals, raw, converted = app_open
     pdf = raw / "figpaper.pdf"
     pdf.write_bytes(b"%PDF...")
@@ -301,11 +311,11 @@ def test_converted_arrived_relocates_images_and_rewrites_refs(
         f"Some prose between figures.\n\n"
         f"![Figure 2]({doc_id}_images/_page_2_Figure_3.jpeg)\n"
     )
-    md_path = _drop_marker_output(
+    md_path = _drop_converted_output(
         converted,
         doc_id=doc_id,
         md_text=md_text,
-        sidecar=_marker_sidecar(doc_id, image_count=2),
+        sidecar=_docling_sidecar(doc_id),
         images={
             "_page_0_Figure_1.jpeg": b"\xff\xd8\xff\xe0fakejpeg1",
             "_page_2_Figure_3.jpeg": b"\xff\xd8\xff\xe0fakejpeg2",
@@ -340,11 +350,11 @@ def test_get_document_image_serves_an_extracted_figure(
     doc_id = client.post("/ingest/raw-arrived", json={"path": str(pdf)}).json()[
         "document_id"
     ]
-    md_path = _drop_marker_output(
+    md_path = _drop_converted_output(
         converted,
         doc_id=doc_id,
         md_text=f"![fig]({doc_id}_images/f.jpeg)\n",
-        sidecar=_marker_sidecar(doc_id, image_count=1),
+        sidecar=_docling_sidecar(doc_id),
         images={"f.jpeg": b"\xff\xd8\xff\xe0imagedata"},
     )
     client.post("/ingest/converted-arrived", json={"path": str(md_path)})
@@ -400,11 +410,11 @@ def test_converted_arrived_duplicate_under_retry(
     doc_id = client.post("/ingest/raw-arrived", json={"path": str(pdf)}).json()[
         "document_id"
     ]
-    md = _drop_marker_output(
+    md = _drop_converted_output(
         converted, doc_id=doc_id, md_text="# t\n\nbody.\n",
-        sidecar={"marker_version": "1.10.2", "source": "/input/in.pdf",
-                 "duration_seconds": 1.0, "image_count": 0,
-                 "completed_at": "2026-05-10T10:00:00+00:00"},
+        sidecar={"docling_version": "2.0.0", "source": "/input/in.pdf",
+                 "parse_duration_seconds": 1.0, "polish_duration_seconds": 2.0,
+                 "completed_at": "2026-05-16T10:00:00+00:00"},
     )
     first = client.post("/ingest/converted-arrived", json={"path": str(md)}).json()
     assert first["action"] == "ingested"
@@ -415,8 +425,8 @@ def test_converted_arrived_duplicate_under_retry(
 def test_process_converted_arrival_tolerates_missing_sidecar(
     tmp_path: Path,
 ) -> None:
-    """Marker is allowed to drop a .md without a sidecar; the ingest
-    still succeeds, just without the extraction_runs metadata."""
+    """The converter is allowed to drop a .md without a sidecar; the
+    ingest still succeeds, just without the extraction_runs metadata."""
     conn = connect(":memory:")
     migrate(conn)
     library = tmp_path / "library"
