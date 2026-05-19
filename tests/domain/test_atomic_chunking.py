@@ -20,6 +20,8 @@ from parsem.domain.atomic import (
     build_atomic_pieces,
     validate_pieces,
 )
+from parsem.domain.chunking import ChunkingRuleset, ChunkPlan, validate_chunk_plan
+from parsem.domain.chunking.current_reading_time import CurrentReadingTimeStrategy
 from parsem.domain.materialize import (
     Chunk,
     derive_sections,
@@ -30,8 +32,6 @@ from parsem.domain.preprocessed import (
     ReadingRules,
     preprocess_pieces,
 )
-from parsem.domain.strategies import ChunkingRuleset, ChunkPlan, validate_chunk_plan
-from parsem.domain.strategies.current_reading_time import CurrentReadingTimeStrategy
 from parsem.parse.line_index import LineIndex
 from parsem.parse.markdown_parse import parse
 from parsem.store.revisions import DocumentRevision, compute_content_hash
@@ -508,7 +508,7 @@ def test_validate_chunk_plan_rejects_missing_piece() -> None:
     pieces = build_atomic_pieces(parse(text), rules.atomic_rules, text, LineIndex.from_text(text))
     preprocessed = preprocess_pieces(pieces, rules.reading_rules)
     # Build a plan that drops the second piece.
-    from parsem.domain.strategies import ChunkPlan, PlannedChunk
+    from parsem.domain.chunking import ChunkPlan, PlannedChunk
     bad_plan = ChunkPlan(planned_chunks=[
         PlannedChunk(
             ordinal=0,

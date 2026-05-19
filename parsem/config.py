@@ -81,6 +81,12 @@ ductile:
   base_url: ${PARSEM_DUCTILE_BASE_URL:-}
   api_token: ${PARSEM_DUCTILE_TOKEN:-}
 
+chunking:
+  # Process-wide chunking strategy. Resolved against the registry in
+  # parsem.domain.chunking; unknown names fall back to the registry
+  # default rather than failing boot. Dev-only knob today — no UI.
+  default_strategy: ${PARSEM_CHUNKING_STRATEGY:-current_reading_time}
+
 presentation:
   # The reader's appearance. theme/density/width/size are also
   # overridable per-browser via the in-reader "Aa" / "," panel (stored
@@ -149,6 +155,17 @@ class DuctileSettings:
 
     base_url: str  # e.g. "http://localhost:8888"; empty = disabled
     api_token: str  # bearer for the outbound call; empty = no auth header
+
+
+@dataclass(frozen=True)
+class ChunkingSettings:
+    """Process-wide chunking knobs (claude-axx.9). `default_strategy`
+    names an entry in `parsem.domain.chunking.STRATEGIES`; the value is
+    applied to the chunking module's `DEFAULT_STRATEGY_NAME` at boot.
+    Unknown names fall back to the shipped default so a typo in YAML
+    doesn't break ingest."""
+
+    default_strategy: str
 
 
 @dataclass(frozen=True)
@@ -224,6 +241,7 @@ class Settings:
     ingest: IngestSettings
     presentation: PresentationSettings
     ductile: DuctileSettings
+    chunking: ChunkingSettings
 
 
 def resolve_config_path(explicit: Path | str | None = None) -> Path:
@@ -289,6 +307,12 @@ def _settings_from_dict(raw: dict[str, Any]) -> Settings:
         ductile=DuctileSettings(
             base_url=str(get(raw, "ductile.base_url", "") or ""),
             api_token=str(get(raw, "ductile.api_token", "") or ""),
+        ),
+        chunking=ChunkingSettings(
+            default_strategy=str(
+                get(raw, "chunking.default_strategy", "current_reading_time")
+                or "current_reading_time"
+            ),
         ),
     )
 

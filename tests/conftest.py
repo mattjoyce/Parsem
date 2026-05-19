@@ -5,10 +5,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from parsem.domain.atomic import build_atomic_pieces
+from parsem.domain.chunking import ChunkingRuleset
+from parsem.domain.chunking.current_reading_time import CurrentReadingTimeStrategy
 from parsem.domain.materialize import Chunk, Section, derive_sections, materialize_chunks
 from parsem.domain.preprocessed import preprocess_pieces
-from parsem.domain.strategies import ChunkingRuleset
-from parsem.domain.strategies.current_reading_time import CurrentReadingTimeStrategy
 from parsem.parse.line_index import LineIndex
 from parsem.parse.markdown_parse import parse
 from parsem.store.revisions import DocumentRevision

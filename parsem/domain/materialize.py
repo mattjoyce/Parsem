@@ -18,7 +18,7 @@ import hashlib
 from dataclasses import dataclass, field
 
 from parsem.domain.atomic import AtomicPiece, PieceKind
-from parsem.domain.strategies import ChunkingRuleset, ChunkPlan
+from parsem.domain.chunking import ChunkingRuleset, ChunkPlan
 from parsem.parse.markdown_parse import BlockType
 from parsem.store.revisions import DocumentRevision
 

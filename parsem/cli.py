@@ -34,6 +34,7 @@ from parsem.config import (
     ensure_library_layout,
     load_settings,
 )
+from parsem.domain.chunking import set_default_strategy
 from parsem.ingest.paths import unique_inbound_path
 from parsem.ingest.url_submit import UrlSubmitError, submit_url
 from parsem.store.db import connect, migrate
@@ -85,6 +86,8 @@ def build_app(
     neither, loads from the default config path."""
     if settings is None and paths is None:
         settings = load_settings()
+    if settings is not None:
+        set_default_strategy(settings.chunking.default_strategy)
     resolved_paths = paths or (settings.paths if settings else None)
     assert resolved_paths is not None  # one of the two branches set it
     ensure_library_layout(resolved_paths)
@@ -162,6 +165,7 @@ def _cmd_rechunk(args: argparse.Namespace) -> int:
     parse/chunk pipeline on a document's stored markdown, off-server
     (e.g. after a chunking-logic change). claude-m4l."""
     settings = load_settings(args.config)
+    set_default_strategy(settings.chunking.default_strategy)
     ensure_library_layout(settings.paths)
     conn = connect(settings.paths.db_path)
     migrate(conn)

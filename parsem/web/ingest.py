@@ -22,10 +22,13 @@ from pathlib import Path
 
 from parsem.config import PROJECT_ROOT
 from parsem.domain.atomic import build_atomic_pieces, validate_pieces
+from parsem.domain.chunking import (
+    ChunkingRuleset,
+    get_strategy,
+    validate_chunk_plan,
+)
 from parsem.domain.materialize import derive_sections, materialize_chunks
 from parsem.domain.preprocessed import preprocess_pieces
-from parsem.domain.strategies import ChunkingRuleset, validate_chunk_plan
-from parsem.domain.strategies.current_reading_time import CurrentReadingTimeStrategy
 from parsem.ingest import layout
 from parsem.parse.markdown_parse import parse
 from parsem.store.documents import (
@@ -62,7 +65,7 @@ def parse_and_persist(
         )
         validate_pieces(pieces, text)
         preprocessed = preprocess_pieces(pieces, rules.reading_rules)
-        strategy = CurrentReadingTimeStrategy()
+        strategy = get_strategy()
         plan = strategy.plan(preprocessed, rules)
         validate_chunk_plan(plan, preprocessed)
         chunk_records = materialize_chunks(plan, revision, pieces, rules)

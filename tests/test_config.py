@@ -82,6 +82,8 @@ def test_load_settings_uses_defaults_for_missing_sections(tmp_path: Path) -> Non
     assert settings.presentation.font_size == 18
     assert settings.presentation.fonts  # non-empty shipped list
     assert settings.presentation.fonts[0].label == "Charter"
+    # chunking: too — registry default when the block is absent.
+    assert settings.chunking.default_strategy == "current_reading_time"
 
 
 def test_load_settings_raises_when_file_missing(tmp_path: Path) -> None:
@@ -182,6 +184,38 @@ def test_ensure_default_config_writes_template_only_once(tmp_path: Path) -> None
     assert "ingest:" in written
     assert "presentation:" in written
     assert "fonts:" in written
+    assert "chunking:" in written
+
+
+# Chunking settings (claude-axx.9)
+# ────────────────────────────────
+
+
+def test_chunking_default_strategy_loads_from_yaml(tmp_path: Path) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"paths:\n  data: {tmp_path / 'd'}\n  library: {tmp_path / 'l'}\n"
+        f"chunking:\n  default_strategy: current_reading_time\n",
+        encoding="utf-8",
+    )
+    settings = load_settings(config, auto_create_default=False)
+    assert settings.chunking.default_strategy == "current_reading_time"
+
+
+def test_chunking_default_strategy_env_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PARSEM_CHUNKING_STRATEGY", "experimental_xyz")
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"paths:\n  data: {tmp_path / 'd'}\n  library: {tmp_path / 'l'}\n"
+        "chunking:\n  default_strategy: ${PARSEM_CHUNKING_STRATEGY:-current_reading_time}\n",
+        encoding="utf-8",
+    )
+    settings = load_settings(config, auto_create_default=False)
+    # Config carries the raw value verbatim — registry-level fallback
+    # happens later via set_default_strategy(), not at load time.
+    assert settings.chunking.default_strategy == "experimental_xyz"
 
 
 # Back-compat env-var resolve_paths

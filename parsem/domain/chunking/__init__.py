@@ -139,3 +139,51 @@ def _dataclass_to_dict(obj: object) -> dict[str, object]:
     """Lightweight dataclass→dict that doesn't import dataclasses.asdict
     (which copies; we just want the fields)."""
     return {f: getattr(obj, f) for f in obj.__dataclass_fields__}  # type: ignore[attr-defined]
+
+
+# Strategy registry. Populated below after type definitions so the
+# strategy modules can import their dependencies back from this package
+# without a cycle. New strategies register by adding a line to
+# `_register_builtin_strategies()`.
+DEFAULT_STRATEGY_NAME: str = "current_reading_time"
+
+STRATEGIES: dict[str, ChunkingStrategy] = {}
+
+
+def _register_builtin_strategies() -> None:
+    """Import + register the shipped strategies. Done lazily inside a
+    function so `from . import …` in strategy modules resolves cleanly."""
+    from .current_reading_time import CurrentReadingTimeStrategy
+
+    STRATEGIES[CurrentReadingTimeStrategy.name] = CurrentReadingTimeStrategy()
+
+
+_register_builtin_strategies()
+
+
+def get_strategy(name: str | None = None) -> ChunkingStrategy:
+    """Resolve a strategy by name. Unknown name falls back to the
+    default (same degrade-don't-crash policy as the appearance axes in
+    `config._one_of`) — caller logs the miss, the document still gets
+    chunked. Pass `None` to get the default explicitly."""
+    if name is None:
+        return STRATEGIES[DEFAULT_STRATEGY_NAME]
+    return STRATEGIES.get(name, STRATEGIES[DEFAULT_STRATEGY_NAME])
+
+
+def is_known_strategy(name: str) -> bool:
+    """Cheap predicate so callers can log the fallback once rather than
+    swallow the miss silently."""
+    return name in STRATEGIES
+
+
+def set_default_strategy(name: str) -> str:
+    """Set the process-wide default strategy. Returns the name actually
+    in effect after the call — equals `name` when it resolves, equals
+    the previous default when it doesn't. Called from CLI/app boot once
+    settings are loaded, so the rest of the codebase can stay free of
+    settings plumbing."""
+    global DEFAULT_STRATEGY_NAME
+    if name in STRATEGIES:
+        DEFAULT_STRATEGY_NAME = name
+    return DEFAULT_STRATEGY_NAME
