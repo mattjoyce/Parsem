@@ -2,6 +2,10 @@
       data-current-position="{{ current_position }}"
       data-high-water-position="{{ high_water_position }}">
   <header class="top-bar">
+    <a class="top-bar__home" href="/library"
+       aria-label="Back to library" title="Back to library">
+      <img src="/static/favicon.svg" alt="">
+    </a>
     <div class="top-bar__identity">
       <h1 class="doc-title">{{ title }}</h1>
       <div id="section-heading" class="section-line">{% if section_heading %}{{ section_heading }}{% endif %}</div>

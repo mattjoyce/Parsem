@@ -1,6 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Parsem">
-  <rect width="32" height="32" rx="7" fill="#FAF7F0"/>
-  <rect x="7" y="7" width="2.5" height="18" rx="1.25" fill="#5E5346"/>
-  <rect x="13" y="11" width="13" height="2.5" rx="1.25" fill="#1A1A1A" fill-opacity="0.55"/>
-  <rect x="13" y="18" width="13" height="2.5" rx="1.25" fill="#1A1A1A" fill-opacity="0.55"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Parsem app icon">
+  <title>Parsem app icon</title>
+  <rect width="512" height="512" rx="96" fill="#f4f2ed"/>
+  <rect x="153" y="58" width="206" height="396" rx="18" fill="#17191c"/>
+  <clipPath id="page">
+    <rect x="165" y="70" width="182" height="372" rx="12"/>
+  </clipPath>
+  <g clip-path="url(#page)">
+    <rect x="165" y="70" width="182" height="124" fill="#2f3337"/>
+    <rect x="165" y="194" width="182" height="124" fill="#070707"/>
+    <rect x="165" y="318" width="182" height="124" fill="#c9cdd1"/>
+  </g>
 </svg>

@@ -130,8 +130,8 @@ body {
  * appears/disappears at heading transitions. */
 .top-bar {
   display: grid;
-  /* identity | progress | token dots | "Aa" panel trigger */
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  /* home | identity | progress | token dots | "Aa" panel trigger */
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
   align-items: center;
   gap: 1.25em;
   padding: 0.6em 1em;
@@ -139,6 +139,26 @@ body {
   border-bottom: 1px solid var(--tint-1);
   background: var(--bg);
 }
+
+/* Home link — back to the library. Visually a peer of the "Aa" panel
+ * trigger: dimmed at rest so the doc title owns the bar, brightens on
+ * hover. No proper landing page yet; this is the only nav surface. */
+.top-bar__home {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6em;
+  height: 1.6em;
+  opacity: 0.55;
+  transition: opacity 120ms ease, transform 120ms ease;
+  text-decoration: none;
+}
+.top-bar__home:hover { opacity: 1; transform: scale(1.04); }
+.top-bar__home:focus-visible {
+  outline: 2px solid var(--tint-3);
+  outline-offset: 2px;
+}
+.top-bar__home img { width: 100%; height: 100%; display: block; }
 
 .top-bar__identity { min-width: 0; }
 .doc-title {
@@ -715,9 +735,23 @@ body.review-mode .chunk--settled { opacity: 0.9; }
 /* Library header — flex so the trigger sits opposite the title. */
 .library-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+/* Brand mark beside the title — non-clickable here (we're already on
+ * the landing page). The reader's top-bar home link uses the same
+ * favicon SVG; this is its larger, contextual cousin. */
+.library-header__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.library-header__mark {
+  width: 1.6em;
+  height: 1.6em;
+  display: block;
+  opacity: 0.9;
 }
 
 /* Modal overlay — fixed, scrims the page, scrolls if the panel is tall.
