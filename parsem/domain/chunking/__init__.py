@@ -89,10 +89,17 @@ class ChunkPlan:
 
 class ChunkingStrategy(Protocol):
     """Protocol every strategy implements. `version` bumps when the
-    strategy's algorithm changes in a way that affects output."""
+    strategy's algorithm changes in a way that affects output.
 
-    name: str
-    version: str
+    `name` and `version` are read-only-shaped — declared as `@property`
+    so frozen-dataclass implementations (cursor strategies) satisfy
+    the protocol alongside class-attribute implementations (legacy)."""
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def version(self) -> str: ...
 
     def plan(
         self,
@@ -152,10 +159,20 @@ STRATEGIES: dict[str, ChunkingStrategy] = {}
 
 def _register_builtin_strategies() -> None:
     """Import + register the shipped strategies. Done lazily inside a
-    function so `from . import …` in strategy modules resolves cleanly."""
-    from .current_reading_time import CurrentReadingTimeStrategy
+    function so `from . import …` in strategy modules resolves cleanly.
 
-    STRATEGIES[CurrentReadingTimeStrategy.name] = CurrentReadingTimeStrategy()
+    `current_reading_time` is the cursor-based composition (claude-axx.10
+    phase 1). The imperative `current_reading_time_legacy` stays
+    registered so the equivalence test and side-by-side comparisons can
+    reach it; slated for deletion once cursor has soaked."""
+    from .current_reading_time import CurrentReadingTimeStrategy
+    from .cursor_current_reading_time import build_cursor_current_reading_time
+
+    legacy = CurrentReadingTimeStrategy()
+    STRATEGIES[legacy.name] = legacy
+
+    cursor = build_cursor_current_reading_time()
+    STRATEGIES[cursor.name] = cursor
 
 
 _register_builtin_strategies()

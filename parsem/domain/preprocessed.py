@@ -9,10 +9,14 @@ pieces. Phase 1 keeps preprocessing in-memory (not persisted).
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Literal
 
 from parsem.domain.atomic import AtomicPiece
+
+_EMPTY_ANNOTATIONS: Mapping[str, object] = MappingProxyType({})
 
 
 @dataclass(frozen=True)
@@ -51,7 +55,14 @@ _IMAGE_ALT_RE = re.compile(r"!\[([^\]]*)\]")
 
 @dataclass(frozen=True)
 class PreprocessedPiece:
-    """An atomic piece plus deterministic flags and read-time metrics."""
+    """An atomic piece plus deterministic flags and read-time metrics.
+
+    `annotations` is a read-only mapping populated at construction time
+    by registered annotators (claude-axx.10). It carries per-piece
+    values that cursor rules consult — e.g. a `transition_edge: float`
+    score from a lexical annotator. Construction-time-only by
+    convention; the mapping is `MappingProxyType` so attempts to mutate
+    after the fact raise `TypeError` loudly."""
 
     piece: AtomicPiece
     word_count: int
@@ -66,17 +77,44 @@ class PreprocessedPiece:
     is_image: bool
     is_structural_atomic: bool
     is_colon_terminated: bool
+    annotations: Mapping[str, object] = field(default_factory=lambda: _EMPTY_ANNOTATIONS)
 
 
 def preprocess_pieces(
     pieces: list[AtomicPiece],
     rules: ReadingRules,
+    *,
+    annotator_names: tuple[str, ...] = (),
 ) -> list[PreprocessedPiece]:
-    """Annotate each piece with read-time + flags using the given rules."""
+    """Annotate each piece with read-time + flags using the given rules.
+
+    `annotator_names` (claude-axx.10) names registered annotators whose
+    per-piece outputs are merged into each PreprocessedPiece's
+    `annotations` map. Empty tuple = today's behaviour. Annotator
+    lookup raises `UnknownAnnotatorError` if a name isn't registered —
+    fail loudly at construction, not mid-chunking."""
+    if annotator_names:
+        from parsem.domain.chunking.annotators import get_annotator
+
+        per_piece: dict[int, dict[str, object]] = {p.ordinal: {} for p in pieces}
+        for name in annotator_names:
+            annotator = get_annotator(name)
+            output = annotator.annotate(pieces)
+            for ordinal, values in output.items():
+                per_piece.setdefault(ordinal, {}).update(values)
+        return [
+            _preprocess(p, rules, annotations=MappingProxyType(per_piece[p.ordinal]))
+            for p in pieces
+        ]
     return [_preprocess(p, rules) for p in pieces]
 
 
-def _preprocess(piece: AtomicPiece, rules: ReadingRules) -> PreprocessedPiece:
+def _preprocess(
+    piece: AtomicPiece,
+    rules: ReadingRules,
+    *,
+    annotations: Mapping[str, object] = _EMPTY_ANNOTATIONS,
+) -> PreprocessedPiece:
     word_count = len(piece.text_snapshot.split())
     is_code = piece.kind == "code_block"
     is_heading = piece.kind == "heading"
@@ -125,6 +163,7 @@ def _preprocess(piece: AtomicPiece, rules: ReadingRules) -> PreprocessedPiece:
         is_image=is_image,
         is_structural_atomic=is_structural_atomic,
         is_colon_terminated=is_colon_terminated,
+        annotations=annotations,
     )
 
 

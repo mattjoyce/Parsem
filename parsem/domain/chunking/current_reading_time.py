@@ -29,9 +29,16 @@ from . import (
 
 
 class CurrentReadingTimeStrategy:
-    """Reproduces today's deterministic time-based chunking behaviour."""
+    """Reproduces today's deterministic time-based chunking behaviour.
 
-    name = "current_reading_time"
+    Renamed to `current_reading_time_legacy` (claude-axx.10): the
+    cursor-based composition in `cursor_current_reading_time.py` now
+    owns the `current_reading_time` registry key. The legacy strategy
+    stays registered so the equivalence test and any manual side-by-
+    side comparison (`PARSEM_CHUNKING_STRATEGY=current_reading_time_legacy`)
+    can reach it. Slated for deletion once the cursor strategy has soaked."""
+
+    name = "current_reading_time_legacy"
     version = "1.0.0"
 
     def plan(

@@ -33,8 +33,18 @@ def _restore_default() -> object:
 
 
 def test_current_reading_time_is_registered() -> None:
+    """`current_reading_time` resolves to the cursor-based composition
+    (claude-axx.10); the legacy imperative class is still available
+    under `current_reading_time_legacy` for equivalence comparison."""
     assert "current_reading_time" in STRATEGIES
-    assert isinstance(STRATEGIES["current_reading_time"], CurrentReadingTimeStrategy)
+    assert STRATEGIES["current_reading_time"].name == "current_reading_time"
+
+
+def test_current_reading_time_legacy_is_registered() -> None:
+    assert "current_reading_time_legacy" in STRATEGIES
+    assert isinstance(
+        STRATEGIES["current_reading_time_legacy"], CurrentReadingTimeStrategy
+    )
 
 
 def test_default_strategy_name_is_current_reading_time() -> None:
@@ -99,6 +109,46 @@ def test_get_strategy_with_no_args_uses_module_default() -> None:
         assert get_strategy(None).name == "dummy_for_test"
     finally:
         del STRATEGIES["dummy_for_test"]
+
+
+def test_missing_annotation_raises_at_strategy_compose_time() -> None:
+    """A cursor rule whose `requires` names an annotation no configured
+    annotator produces must fail loudly at `compose_strategy()` — not
+    silently no-op partway through chunking. Names both the rule and
+    the missing key so the error message points at the fix."""
+    import pytest
+
+    from parsem.domain.chunking.annotators import MissingAnnotationError
+    from parsem.domain.chunking.cursor import (
+        PASS,
+        CursorContext,
+        Rule,
+        RuleDecision,
+        compose_strategy,
+    )
+
+    class _RuleNeedingTopic:
+        name = "needs_topic"
+        priority = 50
+        requires = ("topic_id",)
+
+        def consult(self, piece, bucket, chunks_so_far, ctx):
+            return PASS
+
+    # Sanity: the protocol-shaped object is a Rule by structural checks.
+    _ = Rule, RuleDecision, CursorContext
+
+    with pytest.raises(MissingAnnotationError) as exc_info:
+        compose_strategy(
+            name="broken",
+            version="0.0.0",
+            rules=(_RuleNeedingTopic(),),
+            annotator_names=(),
+        )
+    assert exc_info.value.rule_name == "needs_topic"
+    assert exc_info.value.missing_key == "topic_id"
+    assert "needs_topic" in str(exc_info.value)
+    assert "topic_id" in str(exc_info.value)
 
 
 def test_registered_strategies_satisfy_protocol() -> None:
