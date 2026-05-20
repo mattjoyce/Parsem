@@ -1,9 +1,14 @@
-"""Equivalence: cursor `current_reading_time` ≡ legacy on every fixture.
+"""Equivalence: cursor `current_reading_time` ≡ legacy on non-heading paths.
 
-Spec: claude-axx.10 phase 1 acceptance. The cursor-based composition
-must produce byte-identical ChunkPlans against the legacy imperative
-planner on every input the test suite already exercises, plus the
-welcome corpus. Any divergence is a regression, not a config option.
+Spec: claude-axx.10 phase 1 acceptance, narrowed by claude-axx.10.2.
+The cursor strategy intentionally diverges from legacy on heading
+sequences (no-orphan-heading policy: `heading -> code` is one chunk,
+`heading -> heading -> prose` is one chunk). The diverging cases live
+in `test_cursor_heading_glue.py`. This file pins agreement on every
+*other* path — pure prose, lists, blockquotes, tables, HR, colon
+lead-in, atomicity overrides, edge cases.
+
+Any divergence on the cases in this file is a regression.
 """
 
 from __future__ import annotations
@@ -50,15 +55,9 @@ def _assert_plans_equal(legacy, cursor, *, context: str) -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# Welcome corpus — the canonical UAT input
-# ---------------------------------------------------------------------------
-
-
-def test_equivalence_on_welcome_corpus() -> None:
-    text = WELCOME.read_text(encoding="utf-8")
-    legacy, cursor = _plans_for(text)
-    _assert_plans_equal(legacy, cursor, context="welcome.md")
+# Welcome corpus is no longer a clean equivalence fixture — its
+# headings hit the no-orphan-heading policy. See
+# `test_cursor_heading_glue.test_welcome_corpus_has_no_heading_only_chunk`.
 
 
 # ---------------------------------------------------------------------------
@@ -87,9 +86,8 @@ def test_equivalence_heading_attaches_forward() -> None:
     _assert_plans_equal(*_plans_for(text), context="heading-attach-forward")
 
 
-def test_equivalence_code_block_after_heading() -> None:
-    text = "## Code\n\n```\nprint('hi')\n```\n"
-    _assert_plans_equal(*_plans_for(text), context="code-after-heading")
+# `heading -> code` is intentionally divergent — see
+# `test_cursor_heading_glue.test_heading_glues_to_following_code`.
 
 
 def test_equivalence_list_run() -> None:
@@ -126,18 +124,9 @@ def test_equivalence_horizontal_rule_separates_prose() -> None:
     _assert_plans_equal(*_plans_for(text), context="hr-separates")
 
 
-def test_equivalence_heading_then_code_then_prose() -> None:
-    text = (
-        "## Section\n\n"
-        "```\nx = 1\n```\n\n"
-        "Trailing prose sentence.\n"
-    )
-    _assert_plans_equal(*_plans_for(text), context="heading-code-prose")
-
-
-def test_equivalence_consecutive_headings() -> None:
-    text = "# H1\n\n## H2\n\nBody sentence.\n"
-    _assert_plans_equal(*_plans_for(text), context="consecutive-headings")
+# `heading -> code -> prose` and `heading -> heading -> prose` are
+# intentionally divergent — see `test_cursor_heading_glue` for the
+# pinned cursor behaviour.
 
 
 def test_equivalence_colon_then_code() -> None:

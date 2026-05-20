@@ -1,14 +1,15 @@
-"""Cursor-based reproduction of `current_reading_time` (claude-axx.10).
+"""Cursor-based `current_reading_time` (claude-axx.10).
 
-Composes the shipped rule values over the cursor engine to produce a
-strategy that is byte-identical with the legacy imperative
-`CurrentReadingTimeStrategy` on every existing fixture (see
-`tests/domain/test_cursor_equivalence.py`).
+Composes the shipped rule values over the cursor engine. Equivalent
+with the legacy imperative `CurrentReadingTimeStrategy` on all
+non-heading paths (see `tests/domain/test_cursor_equivalence.py`);
+intentionally diverges on heading sequences per the no-orphan-heading
+policy (claude-axx.10.2, see `tests/domain/test_cursor_heading_glue.py`).
 
-The version bump from `1.0.0` (legacy) to `2.0.0` (cursor) signals an
-engine change: same outputs, different mechanism. A persisted
-`ChunkingRun` keyed on the version invalidates cleanly when the cursor
-strategy ships.
+Versioning:
+  - `2.0.0` — engine change (cursor vs imperative); same outputs.
+  - `2.1.0` — no-orphan-heading policy; heading-only chunks are
+              deferred and glued to the next chunk's lead pieces.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ def build_cursor_current_reading_time() -> ComposedStrategy:
     safe to stash in `STRATEGIES`."""
     return compose_strategy(
         name="current_reading_time",
-        version="2.0.0",
+        version="2.1.0",
         rules=(
             HorizontalRuleSkip(),
             ColonLeadInAbsorb(),

@@ -217,21 +217,65 @@ def _consult(
 
 @dataclass
 class _CursorState:
+    """Engine-internal mutable state.
+
+    `pending_headings` (claude-axx.10.2 "no orphan headings"): a flush
+    of a heading-only bucket does not emit; the heading is stashed
+    here and prepended to whatever chunk emits next. At end-of-doc, a
+    pending heading with no companion content emits alone (graceful
+    degrade — we can't satisfy the constraint when the heading is the
+    last thing in the document).
+
+    This is a small named **flush-time policy**, not a piece-arrival
+    rule, so it lives in the engine rather than the rule library. If
+    multiple flush-time policies ever emerge, lift to a `Guard`
+    concept then."""
+
     chunks: list[PlannedChunk]
     bucket: list[PreprocessedPiece] = field(default_factory=list)
     bucket_seconds: float = 0.0
+    pending_headings: list[PreprocessedPiece] = field(default_factory=list)
+    pending_seconds: float = 0.0
 
     def _flush(self, reason: PlanningReason) -> None:
         if not self.bucket:
             return
-        self.chunks.append(_make_chunk(
-            ordinal=len(self.chunks),
-            pieces=self.bucket,
-            seconds=self.bucket_seconds,
-            reason=reason,
-        ))
+        # No-orphan-heading policy: if the bucket is all headings, do
+        # not emit. Move the bucket into pending and reset; the next
+        # emit (any kind) will prepend these as lead pieces.
+        if all(p.is_heading for p in self.bucket):
+            self.pending_headings.extend(self.bucket)
+            self.pending_seconds += self.bucket_seconds
+            self.bucket = []
+            self.bucket_seconds = 0.0
+            return
+        self._emit_chunk(pieces=self.bucket, seconds=self.bucket_seconds, reason=reason)
         self.bucket = []
         self.bucket_seconds = 0.0
+
+    def _emit_chunk(
+        self,
+        *,
+        pieces: list[PreprocessedPiece],
+        seconds: float,
+        reason: PlanningReason,
+    ) -> None:
+        """Append a chunk to `chunks`, prepending any pending headings
+        as lead pieces. Clears pending state after the emit."""
+        if self.pending_headings:
+            combined_pieces = [*self.pending_headings, *pieces]
+            combined_seconds = self.pending_seconds + seconds
+            self.pending_headings = []
+            self.pending_seconds = 0.0
+        else:
+            combined_pieces = pieces
+            combined_seconds = seconds
+        self.chunks.append(_make_chunk(
+            ordinal=len(self.chunks),
+            pieces=combined_pieces,
+            seconds=combined_seconds,
+            reason=reason,
+        ))
 
     def _append(self, piece: PreprocessedPiece) -> None:
         self.bucket.append(piece)
@@ -241,12 +285,20 @@ class _CursorState:
         # Match legacy end-of-doc reason logic: end_of_document when
         # this is the first chunk OR the trailing bucket has no heading
         # prefix; prose_budget when a heading-led bucket trails the doc.
-        if not self.bucket:
-            return
-        if not self.chunks or not _bucket_lead_is_heading(self.bucket):
-            self._flush("end_of_document")
-        else:
-            self._flush("prose_budget")
+        if self.bucket:
+            if not self.chunks or not _bucket_lead_is_heading(self.bucket):
+                self._flush("end_of_document")
+            else:
+                self._flush("prose_budget")
+        # Degrade path: pending headings with nowhere to attach. Emit as
+        # a single chunk so we never lose content. The reader sees a
+        # bare heading only when the doc literally ends on heading(s).
+        if self.pending_headings:
+            self._emit_chunk(
+                pieces=[],
+                seconds=0.0,
+                reason="end_of_document" if not self.chunks else "prose_budget",
+            )
 
 
 def _apply(
@@ -264,12 +316,14 @@ def _apply(
         return
     if action == Action.EMIT_ALONE:
         state._flush(decision.flush_reason)
-        state.chunks.append(_make_chunk(
-            ordinal=len(state.chunks),
+        # Use _emit_chunk so any pending headings prepend to this solo
+        # piece — e.g. `heading -> code` becomes one chunk [heading, code]
+        # rather than two (no-orphan-heading policy).
+        state._emit_chunk(
             pieces=[piece],
             seconds=piece.estimated_read_seconds,
             reason=decision.reason,
-        ))
+        )
         return
     if action == Action.FLUSH_THEN_ABSORB_PREVIOUS:
         # Flush the prose bucket first — the just-emitted chunk is now
