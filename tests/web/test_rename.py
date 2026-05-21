@@ -1,8 +1,10 @@
-"""Tests for POST /documents/{id}/rename. Spec §22; bead Parsem-kwq.
+"""Tests for POST /documents/{id}/rename. Spec §22; beads Parsem-kwq,
+Parsem-7wu.2.
 
-The route returns just the row's <tr> fragment so the JS swap can
-replace one row in place. Validation: trim whitespace, then reject
-empty / >200 chars with 422; unknown id is 404.
+The route returns just the tile partial (<article class="library-tile">)
+so the JS inline-edit can outerHTML-swap one tile in place. Validation:
+trim whitespace, then reject empty / >200 chars with 422; unknown id is
+404. Markup migrated from row to tile in Parsem-7wu.2 (ADR 0005).
 """
 
 from __future__ import annotations
@@ -53,22 +55,25 @@ def test_rename_persists_new_title(
     assert doc.title == "new name"
 
 
-def test_rename_returns_partial_tr_fragment(
+def test_rename_returns_partial_tile_fragment(
     empty_app: tuple[TestClient, sqlite3.Connection],
 ) -> None:
-    """Response body must be the row partial (a <tr>), not the full
-    library page — the JS inline-edit relies on outerHTML-swapping
-    one row."""
+    """Response body must be the tile partial (an <article>), not the
+    full library page — the v2 JS inline-edit relies on outerHTML-
+    swapping one tile. ADR 0005, bd Parsem-7wu.2."""
     client, conn = empty_app
     doc_id = _seed(conn)
     response = client.post(f"/documents/{doc_id}/rename", json={"title": "renamed"})
     assert response.status_code == 200
     body = response.text
-    assert "<tr" in body
-    assert f'id="library-row-{doc_id}"' in body
+    assert "<article" in body
+    assert f'id="library-tile-{doc_id}"' in body
+    assert "library-tile" in body
     assert "renamed" in body
-    # Progress column must render — the partial expects progress_percent.
-    assert "library-col-progress" in body
+    # The tile silhouette and slug must render — the partial expects
+    # the full extended LibraryRow payload (Parsem-7wu.1 fields).
+    assert "library-tile__silhouette" in body
+    assert "library-tile__slug" in body
     # Sanity: this is a fragment, not a full HTML doc.
     assert "<html" not in body.lower()
 
@@ -142,16 +147,16 @@ def test_library_renders_a_rename_button_per_row(
     assert "library-rename" in body
 
 
-def test_library_template_uses_row_partial(
+def test_library_template_uses_tile_partial(
     empty_app: tuple[TestClient, sqlite3.Connection],
 ) -> None:
-    """The full library page should render rows from `_library_row.html`
-    so the rename response and the page render the same markup."""
+    """The full library page should render tiles from `_library_tile.html`
+    so the rename response and the page render the same markup. ADR 0005."""
     client, conn = empty_app
     doc_id = _seed(conn, title="alpha")
     body = client.get("/library").text
-    assert f'id="library-row-{doc_id}"' in body
-    assert "library-row" in body
+    assert f'id="library-tile-{doc_id}"' in body
+    assert "library-tile" in body
 
 
 def test_library_js_is_served(

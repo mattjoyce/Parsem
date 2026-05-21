@@ -70,6 +70,10 @@ def create_app(
     )
     app.state.presentation = presentation_settings or PresentationSettings.default()
     app.state.templates = Jinja2Templates(directory=_TEMPLATES_DIR)
+    # Library v2 tile slug needs date + source-type display helpers
+    # (ADR 0005, bd Parsem-7wu.2). Registered once at startup.
+    from parsem.web.template_filters import register as _register_filters
+    _register_filters(app.state.templates)
     app.include_router(library_router)
     app.include_router(reader_router)
     app.include_router(ingest_router)

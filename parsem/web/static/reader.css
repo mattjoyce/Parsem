@@ -623,42 +623,248 @@ body {
 .rating-bar--4 { background: var(--rating-4); }
 .rating-bar--5 { background: var(--rating-5); }
 
-/* Library heatmap strip (spec §9.1, claude-yda) — one thin column
- * per chunk, tinted by the latest rating. Rendered inside the
- * progress cell beneath the percent text so the row stays compact.
- * Gapless flex of <span> cells; unrated cells render transparent
- * (still take width so the strip's length tracks total chunks). */
-.library-heatmap {
-  display: flex;
-  width: 100%;
-  height: 6px;
-  margin-top: 0.25em;
-  border-radius: 1px;
-  overflow: hidden;
-  background: var(--tint-1);
-}
-.library-heatmap__cell {
-  flex: 1 1 0;
-  min-width: 1px;
-  background: transparent;
-}
-/* Status pill colouring for library rows. The converting state is the
- * only one that carries an in-flight feel; the others rely on the
- * adjacent action button + percent text to communicate. */
-.library-status-converting {
-  color: #6b6b6b;
-  font-style: italic;
-}
-.library-converting-hint {
-  opacity: 0.65;
-  font-size: 0.85em;
+/* === Library v2 — tile grid + tile anatomy =========================
+ * ADR 0005, bd Parsem-7wu.2. Replaces the v1 <table class="library">
+ * with a CSS Grid of square tiles. Tile carries title (primary mark),
+ * 5x5 silhouette (quiet background signal), and slug (source + date
+ * + percent). Per-tile actions live in a transitional <details> menu
+ * — moves to the drawer in the next child (Parsem-7wu.3). */
+
+.library-page { padding: 1.2rem 1.4rem 2rem; max-width: 1280px; margin: 0 auto; }
+
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
 }
 
-.library-heatmap__cell--1 { background: var(--rating-1); }
-.library-heatmap__cell--2 { background: var(--rating-2); }
-.library-heatmap__cell--3 { background: var(--rating-3); }
-.library-heatmap__cell--4 { background: var(--rating-4); }
-.library-heatmap__cell--5 { background: var(--rating-5); }
+/* Tile shape — squarish, slightly taller than wide. The min-height
+ * keeps tiles uniform even when a doc has no status badge. */
+.library-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.9rem 0.95rem 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--tint-2);
+  border-radius: 8px;
+  min-height: 220px;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.library-tile:hover {
+  border-color: var(--tint-3);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+}
+.library-tile--failed { border-color: var(--rating-5); }
+.library-tile--converting { border-style: dashed; }
+
+/* Title — primary recognition mark (ADR 0005, Q1/Q2). Two-line
+ * ellipsis via line-clamp; native `title=` attribute on the link is
+ * the hover-tooltip safety net for long names. */
+.library-tile__title {
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.3;
+  font-weight: 600;
+}
+.library-tile__title-link {
+  color: var(--ink);
+  text-decoration: none;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.library-tile__title-link:hover { text-decoration: underline; }
+.library-tile__title-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* 5x5 silhouette — quiet 'brand colour' mark. Each cell encodes one
+ * of four kinds (absent/unread/read_unrated/rated); rated cells take
+ * the bucket's mean rating colour from --rating-1..5. Opacity tunes
+ * down so the title above stays the primary mark; cells stay
+ * distinguishable.
+ * Layout: 5x5 CSS Grid; ~6px cells with 2px gap. Total ~40x40 — fits
+ * comfortably below the 2-line title. */
+.library-tile__silhouette {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 2px;
+  width: 64px;
+  height: 64px;
+  margin-top: auto; /* pushes the silhouette + slug to the tile bottom */
+  opacity: 0.85;
+}
+.library-tile__cell {
+  border-radius: 1px;
+  background: transparent;
+  border: 1px solid transparent;
+}
+/* Unread — faint outline, no fill. The boundary between filled and
+ * outlined cells acts as an implicit progress indicator (ADR 0005 Q4). */
+.library-tile__cell--unread { border-color: var(--tint-2); }
+/* Read but unrated — neutral fill. The reader has been here but
+ * hasn't recorded a feeling. */
+.library-tile__cell--read_unrated { background: var(--tint-2); }
+/* Absent — only happens when the doc has <25 chunks. Renders
+ * completely invisible so small docs read as spaced marks not
+ * "unread everywhere." */
+.library-tile__cell--absent { background: transparent; }
+/* Rated — colour from the mean-rating palette. Same palette the
+ * full-resolution drawer heatmap will use; at 5x5 with 0.85 opacity
+ * the 5 hues are distinguishable but quiet. */
+.library-tile__cell--rated-1 { background: var(--rating-1); }
+.library-tile__cell--rated-2 { background: var(--rating-2); }
+.library-tile__cell--rated-3 { background: var(--rating-3); }
+.library-tile__cell--rated-4 { background: var(--rating-4); }
+.library-tile__cell--rated-5 { background: var(--rating-5); }
+
+/* Slug line — source + date + percent. Small, quiet, below the
+ * silhouette. ADR 0005, Q9. */
+.library-tile__slug {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35em;
+  font-size: 0.78rem;
+  color: var(--tint-3);
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+}
+.library-tile__source { font-weight: 600; color: var(--ink); opacity: 0.7; }
+.library-tile__sep { opacity: 0.6; }
+.library-tile__date { opacity: 0.85; }
+.library-tile__percent { opacity: 0.9; }
+
+/* Non-ready status line — shown for converting/failed. The tile
+ * border-state (dashed / red) carries the at-glance signal; this
+ * carries the text. */
+.library-tile__status {
+  font-size: 0.78rem;
+  color: var(--tint-3);
+  margin-top: 0.2em;
+}
+.library-status-converting { color: var(--tint-3); font-style: italic; }
+.library-status-failed { color: var(--rating-5); }
+.library-failure-reason { opacity: 0.85; }
+.library-converting-hint { opacity: 0.65; font-size: 0.85em; }
+
+/* Transitional per-tile actions menu (bd Parsem-7wu.2). <details>
+ * gives keyboard + click toggle for free; absolute-positioned in the
+ * top-right corner so it floats over the title without affecting
+ * layout. Removed in Parsem-7wu.3 when the drawer absorbs actions. */
+.library-tile__menu {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.45rem;
+}
+.library-tile__menu-trigger {
+  cursor: pointer;
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 0.05em 0.4em;
+  border-radius: 4px;
+  color: var(--tint-3);
+  list-style: none;
+  user-select: none;
+}
+.library-tile__menu-trigger::-webkit-details-marker { display: none; }
+.library-tile__menu-trigger:hover { background: var(--tint-1); color: var(--ink); }
+.library-tile__menu[open] .library-tile__menu-trigger { background: var(--tint-1); color: var(--ink); }
+.library-tile__menu-items {
+  position: absolute;
+  top: 1.7em;
+  right: 0;
+  background: var(--bg);
+  border: 1px solid var(--tint-2);
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+  padding: 0.3em;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+  min-width: 8em;
+  z-index: 5;
+}
+.library-tile__menu-items button,
+.library-tile__menu-items .library-action-form button {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0.35em 0.6em;
+  font: inherit;
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+  border-radius: 4px;
+  width: 100%;
+}
+.library-tile__menu-items button:hover { background: var(--tint-1); }
+.library-tile__menu-items .library-delete:hover { background: rgba(194, 78, 58, 0.12); }
+.library-tile__menu-items .library-action-form { margin: 0; }
+
+/* Inline rename — input replaces the title text within the link.
+ * Same shape as v1; updated selector lookup in library.js. */
+.library-rename-input {
+  width: 100%;
+  font: inherit;
+  font-weight: 600;
+  font-size: 1.02rem;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 0.15em 0.3em;
+  background: var(--bg);
+  color: var(--ink);
+}
+.library-rename-error { border-color: var(--rating-5); }
+
+/* Ingest section — kept inline for v2.0; demoted to "+ Add" modal in
+ * Parsem-7wu.6. Lightly restyled to match the new card surface. */
+.library-ingest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin: 0.6rem 0 0.4rem;
+}
+.library-ingest__file,
+.library-ingest__url {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.library-ingest input[type="file"],
+.library-ingest input[type="url"] {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.3em 0.5em;
+  border: 1px solid var(--tint-2);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  min-width: 12em;
+}
+.library-ingest button {
+  font: inherit;
+  font-size: 0.9rem;
+  padding: 0.35em 0.9em;
+  border: 1px solid var(--tint-2);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+}
+.library-ingest button:hover { background: var(--tint-1); }
+
+.library-empty {
+  margin: 2rem 0;
+  color: var(--tint-3);
+  text-align: center;
+}
 
 .rating-dot--active:hover {
   /* Hover on the active dot signals "click again to clear." Hollow-

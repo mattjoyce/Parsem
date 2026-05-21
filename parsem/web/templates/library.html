@@ -17,6 +17,10 @@
     </div>
     {% include "_prefs_trigger.html" %}
   </header>
+
+  {# Ingest section — promoted form pair in v1; demoted to a "+ Add"
+     modal in a later child (Parsem-7wu.6). Kept inline here so v2.0
+     ingest paths still work during the redesign. #}
   <section class="library-ingest" aria-label="Add document">
     <form class="library-ingest__file" action="/ingest" method="post" enctype="multipart/form-data">
       <input type="file" name="file" accept=".md,text/markdown" required>
@@ -27,25 +31,15 @@
       <button type="submit">Add URL</button>
     </form>
   </section>
+
   {% if rows %}
-  <table class="library">
-    <thead>
-      <tr>
-        <th class="library-col-title">Title</th>
-        <th class="library-col-status">Status</th>
-        <th class="library-col-progress">Progress</th>
-        <th class="library-col-actions"></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for row in rows %}
-        {% set doc = row.document %}
-        {% set progress_percent = row.progress_percent %}
-        {% set chunk_ratings = row.chunk_ratings %}
-        {% include "_library_row.html" %}
-      {% endfor %}
-    </tbody>
-  </table>
+  {# 3 columns desktop / 2 narrow / 1 mobile via CSS Grid auto-fill.
+     Each tile owns its layout — see _library_tile.html. #}
+  <section class="library-grid">
+    {% for row in rows %}
+      {% include "_library_tile.html" %}
+    {% endfor %}
+  </section>
   {% else %}
   <p class="library-empty">
     No documents yet — drop a .md file or paste a URL above to begin.

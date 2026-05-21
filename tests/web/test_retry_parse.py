@@ -259,9 +259,11 @@ def test_reparse_document_falls_back_to_original_path(
 
 
 def _row_html(library_html: str, doc_id: int) -> str:
-    """Slice out one document's full `<tr>…</tr>` from the library HTML."""
-    start = library_html.index(f'<tr id="library-row-{doc_id}"')
-    end = library_html.index("</tr>", start) + len("</tr>")
+    """Slice out one document's full `<article>…</article>` tile from
+    the library HTML. Migrated from row to tile markup in Parsem-7wu.2
+    (ADR 0005)."""
+    start = library_html.index(f'<article id="library-tile-{doc_id}"')
+    end = library_html.index("</article>", start) + len("</article>")
     return library_html[start:end]
 
 

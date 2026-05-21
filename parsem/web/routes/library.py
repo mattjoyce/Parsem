@@ -24,13 +24,18 @@ from pydantic import BaseModel
 
 from parsem.ingest import layout
 from parsem.store.documents import (
+    LibraryRow,
+    compute_silhouette_buckets,
     delete_document,
+    derive_source_domain,
     list_library_rows,
     load_chunk_ratings_dense,
     load_document,
+    load_section_layout,
     progress_percent_for_document,
     rename_document,
 )
+from parsem.store.tags import list_tags_for_doc
 from parsem.web.ingest import reparse_document
 from parsem.web.state import empty_reader_state
 
@@ -109,16 +114,55 @@ def post_rename(
     now = datetime.now(UTC)
     rename_document(conn, document_id, title=title, now=now)
     updated = replace(doc, title=title, updated_at=now)
+    # Assemble the same LibraryRow the page loop sees so the partial
+    # gets a faithful single-row context (ADR 0005, Parsem-7wu.2).
     progress = progress_percent_for_document(conn, document_id)
     chunk_ratings = load_chunk_ratings_dense(conn, document_id, doc.total_chunks)
+    high_water_row = conn.execute(
+        "SELECT high_water_position, updated_at AS last_opened_at"
+        " FROM reading_state WHERE document_id = ?",
+        (document_id,),
+    ).fetchone()
+    high_water = high_water_row["high_water_position"] if high_water_row else 0
+    last_opened = (
+        datetime.fromisoformat(high_water_row["last_opened_at"])
+        if high_water_row and high_water_row["last_opened_at"]
+        else None
+    )
+    pin_count_row = conn.execute(
+        "SELECT COUNT(*) AS n FROM pins WHERE document_id = ?",
+        (document_id,),
+    ).fetchone()
+    total_seconds_row = conn.execute(
+        "SELECT COALESCE(SUM(estimated_read_seconds), 0) AS s"
+        " FROM chunks WHERE document_id = ?",
+        (document_id,),
+    ).fetchone()
+    row = LibraryRow(
+        document=updated,
+        progress_percent=progress,
+        chunk_ratings=chunk_ratings,
+        source_domain=derive_source_domain(
+            updated.source_type, updated.original_path
+        ),
+        ingest_date=updated.created_at,
+        last_opened=last_opened,
+        pin_count=pin_count_row["n"] if pin_count_row else 0,
+        total_reading_seconds=float(total_seconds_row["s"]) if total_seconds_row else 0.0,
+        tags=list_tags_for_doc(conn, document_id),
+        section_layout=(
+            load_section_layout(conn, document_id)
+            if updated.status == "ready" and (updated.total_chunks or 0) > 0
+            else []
+        ),
+        silhouette_buckets=compute_silhouette_buckets(chunk_ratings, high_water),
+    )
     templates = request.app.state.templates
     return templates.TemplateResponse(
         request,
-        "_library_row.html",
+        "_library_tile.html",
         {
-            "doc": updated,
-            "progress_percent": progress,
-            "chunk_ratings": chunk_ratings,
+            "row": row,
             "title_max_len": _TITLE_MAX_LEN,
         },
     )

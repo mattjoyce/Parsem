@@ -95,12 +95,23 @@ def test_library_lists_every_document(
 def test_library_renders_status_per_row(
     empty_app: tuple[TestClient, sqlite3.Connection],
 ) -> None:
+    """v2 tile: non-ready docs render a `library-status-<status>` div;
+    ready docs render no status badge (the absence IS the signal —
+    ADR 0005). The tile itself carries the ready state via the
+    title + slug + silhouette."""
     client, conn = empty_app
-    _insert(conn, title="ready-doc", status="ready", created_at=T0)
-    _insert(conn, title="failed-doc", status="failed", created_at=T0 + timedelta(seconds=1))
+    ready_id = _insert(conn, title="ready-doc", status="ready", created_at=T0)
+    failed_id = _insert(
+        conn, title="failed-doc", status="failed",
+        created_at=T0 + timedelta(seconds=1),
+    )
     body = client.get("/library").text
-    assert "library-status-ready" in body
+    # Failed status renders as a labelled badge in the tile.
     assert "library-status-failed" in body
+    # Ready tile has the failure modifier absent and shows no status div.
+    assert f"library-tile-{ready_id}" in body
+    assert f"library-tile-{failed_id}" in body
+    assert "library-tile--failed" in body
 
 
 def test_library_title_links_to_reader(
@@ -225,18 +236,22 @@ def test_library_progress_clamps_to_one_hundred_when_position_overflows(
     assert "160%" not in body
 
 
-def test_library_progress_for_failed_doc_with_no_total_chunks_is_zero(
+def test_library_progress_omitted_for_failed_doc_with_no_total_chunks(
     empty_app: tuple[TestClient, sqlite3.Connection],
 ) -> None:
     """status='failed' or 'processing' docs may have total_chunks=NULL.
-    Progress should render as 0% rather than crashing the row."""
+    v2 tile (ADR 0005, Parsem-7wu.2): percent text is hidden for docs
+    with no chunks — the failed badge carries the at-glance signal.
+    The tile must still render without crashing."""
     client, conn = empty_app
-    _insert(conn, title="failed-doc", status="failed", created_at=T0)
+    doc_id = _insert(conn, title="failed-doc", status="failed", created_at=T0)
     body = client.get("/library").text
-    assert "0%" in body
+    assert f"library-tile-{doc_id}" in body
+    assert "library-tile__percent" not in body
+    assert "library-tile--failed" in body
 
 
-# ─── Library heatmap strip (claude-yda) ───────────────────────────────
+# ─── Library v2 tile silhouette (ADR 0005, bd Parsem-7wu.2) ──────────
 
 
 def _seed_doc_with_chunks_and_ratings(
@@ -245,10 +260,12 @@ def _seed_doc_with_chunks_and_ratings(
     title: str,
     chunk_count: int,
     ratings: dict[int, int],
+    high_water: int = 0,
 ) -> int:
-    """Insert a document with `chunk_count` chunks and per-position
-    ratings. Used to verify the library heatmap renders one cell per
-    chunk with the right rating-class modifier."""
+    """Insert a document with `chunk_count` chunks, per-position ratings,
+    and an optional reading_state row at `high_water`. Used to verify
+    the v2 tile silhouette renders the right cell kinds for each
+    reading + rating combination."""
     doc_id = insert_document(
         conn,
         title=title,
@@ -274,84 +291,108 @@ def _seed_doc_with_chunks_and_ratings(
             " VALUES (?, ?, ?)",
             (chunk_ids[pos], rating, T0.isoformat()),
         )
+    if high_water > 0:
+        conn.execute(
+            "INSERT INTO reading_state (document_id, high_water_position,"
+            " current_position, updated_at) VALUES (?, ?, ?, ?)",
+            (doc_id, high_water, high_water, T0.isoformat()),
+        )
     conn.commit()
     return doc_id
 
 
-def test_library_heatmap_renders_one_cell_per_chunk(
+def test_library_silhouette_always_renders_25_cells(
     empty_app: tuple[TestClient, sqlite3.Connection],
 ) -> None:
-    """Heatmap strip has one <span class="library-heatmap__cell"> per
-    chunk position — the strip width tracks total_chunks regardless
-    of how many chunks are rated."""
+    """The 5x5 tile silhouette is always 25 cells — the down-sampler
+    spreads chunks across a fixed grid regardless of total_chunks.
+    ADR 0005, Q3."""
     client, conn = empty_app
     _seed_doc_with_chunks_and_ratings(
-        conn, title="rated", chunk_count=5, ratings={1: 4}
+        conn, title="any", chunk_count=5, ratings={}
     )
     body = client.get("/library").text
-    assert body.count('class="library-heatmap__cell"') + body.count(
-        'library-heatmap__cell library-heatmap__cell--'
-    ) == 5
+    assert body.count('class="library-tile__cell ') == 25
 
 
-def test_library_heatmap_tints_rated_cell_by_rating(
+def test_library_silhouette_tints_read_and_rated_cell(
     empty_app: tuple[TestClient, sqlite3.Connection],
 ) -> None:
-    """A chunk rated 4 renders with the modifier class
-    library-heatmap__cell--4 so CSS can tint it amber per spec §9.1."""
+    """A bucket whose chunks are read AND rated takes the rating-coloured
+    modifier (library-tile__cell--rated-N) so CSS can paint it from
+    the --rating-N palette. Reading-state precedence: rating-coloured
+    only fires when the bucket has settled chunks."""
     client, conn = empty_app
+    # 3 chunks rated 4, fully read → all populated buckets render rated-4.
     _seed_doc_with_chunks_and_ratings(
-        conn, title="rated", chunk_count=3, ratings={0: 4}
+        conn, title="all-rated", chunk_count=3, ratings={0: 4, 1: 4, 2: 4},
+        high_water=3,
     )
     body = client.get("/library").text
-    assert "library-heatmap__cell--4" in body
+    assert "library-tile__cell--rated-4" in body
 
 
-def test_library_heatmap_omits_modifier_for_unrated_cells(
+def test_library_silhouette_unread_for_rated_but_unread_chunks(
     empty_app: tuple[TestClient, sqlite3.Connection],
 ) -> None:
-    """Unrated chunks render the bare cell class without a rating
-    modifier — CSS treats the absence as transparent (background:
-    rgba(0,0,0,0.04) on the strip itself shows through)."""
+    """Reading-state takes precedence over rating in the silhouette:
+    a chunk rated but never read renders as 'unread' (faint outline),
+    not as a rated cell. The mark says 'how it felt' only for territory
+    you actually visited."""
     client, conn = empty_app
     _seed_doc_with_chunks_and_ratings(
-        conn, title="unrated", chunk_count=3, ratings={}
+        conn, title="rated-unread", chunk_count=3, ratings={0: 5},
+        high_water=0,  # never opened
     )
     body = client.get("/library").text
-    # Some heatmap cells exist
-    assert "library-heatmap__cell" in body
-    # No rating modifiers (1..5)
+    assert "library-tile__cell--unread" in body
+    assert "library-tile__cell--rated-5" not in body
+
+
+def test_library_silhouette_omits_rating_modifier_for_read_unrated_buckets(
+    empty_app: tuple[TestClient, sqlite3.Connection],
+) -> None:
+    """Read-but-not-rated buckets render the neutral 'read_unrated'
+    modifier — not a rating-coloured one."""
+    client, conn = empty_app
+    _seed_doc_with_chunks_and_ratings(
+        conn, title="read-unrated", chunk_count=3, ratings={},
+        high_water=3,  # fully read, no ratings
+    )
+    body = client.get("/library").text
+    assert "library-tile__cell--read_unrated" in body
     for r in range(1, 6):
-        assert f"library-heatmap__cell--{r}" not in body
+        assert f"library-tile__cell--rated-{r}" not in body
 
 
-def test_library_heatmap_absent_when_doc_has_no_chunks(
+def test_library_silhouette_renders_for_doc_with_no_chunks(
     empty_app: tuple[TestClient, sqlite3.Connection],
 ) -> None:
-    """Failed / processing docs (total_chunks=NULL) don't render a
-    heatmap — there's nothing to tint. The progress percent text
-    still renders (the existing 0%-no-total test guards that)."""
+    """Failed / processing docs (total_chunks=NULL) still render the
+    25-cell silhouette — all cells are 'unread' since there's nothing
+    to bucket. The tile reads as a quiet empty mark."""
     client, conn = empty_app
     _insert(conn, title="failed-doc", status="failed", created_at=T0)
     body = client.get("/library").text
-    assert 'class="library-heatmap"' not in body
+    assert 'class="library-tile__silhouette"' in body
+    assert body.count('class="library-tile__cell ') == 25
 
 
-def test_library_heatmap_renders_in_row_via_rename_route(
+def test_library_silhouette_renders_in_tile_via_rename_route(
     empty_app: tuple[TestClient, sqlite3.Connection],
 ) -> None:
-    """The rename route re-renders the row partial; the heatmap must
-    survive that re-render so the row stays consistent after a title
-    edit (claude-yda)."""
+    """The rename route re-renders the tile partial; the silhouette
+    must survive that re-render so the tile stays consistent after a
+    title edit. ADR 0005, bd Parsem-7wu.2."""
     client, conn = empty_app
     doc_id = _seed_doc_with_chunks_and_ratings(
-        conn, title="rated", chunk_count=3, ratings={1: 5}
+        conn, title="rated", chunk_count=3, ratings={1: 5}, high_water=3,
     )
     response = client.post(
         f"/documents/{doc_id}/rename", json={"title": "renamed"}
     )
     assert response.status_code == 200
-    assert "library-heatmap__cell--5" in response.text
+    assert "library-tile__cell--rated-5" in response.text
 
 
 def test_progress_percent_pure_function_clamps_and_rounds() -> None:
