@@ -142,13 +142,16 @@ body {
 
 /* Home link — back to the library. Visually a peer of the "Aa" panel
  * trigger: dimmed at rest so the doc title owns the bar, brightens on
- * hover. No proper landing page yet; this is the only nav surface. */
+ * hover. No proper landing page yet; this is the only nav surface.
+ *
+ * Sized by height only — the logo is a tall page silhouette (A4
+ * proportions), so width follows naturally. Setting both would
+ * distort. */
 .top-bar__home {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 1.6em;
-  height: 1.6em;
+  height: 1.25em;
   opacity: 0.55;
   transition: opacity 120ms ease, transform 120ms ease;
   text-decoration: none;
@@ -158,7 +161,7 @@ body {
   outline: 2px solid var(--tint-3);
   outline-offset: 2px;
 }
-.top-bar__home img { width: 100%; height: 100%; display: block; }
+.top-bar__home img { height: 100%; width: auto; display: block; }
 
 .top-bar__identity { min-width: 0; }
 .doc-title {
@@ -741,15 +744,18 @@ body.review-mode .chunk--settled { opacity: 0.9; }
 }
 /* Brand mark beside the title — non-clickable here (we're already on
  * the landing page). The reader's top-bar home link uses the same
- * favicon SVG; this is its larger, contextual cousin. */
+ * logo; this is its larger, contextual cousin. Sized by height only
+ * — the logo is a tall page silhouette (A4 proportions), so width
+ * follows naturally. Height matches roughly the H1's cap-height so
+ * the mark + title group reads as one. */
 .library-header__brand {
   display: flex;
   align-items: center;
   gap: 0.6rem;
 }
 .library-header__mark {
-  width: 1.6em;
-  height: 1.6em;
+  height: 1.4em;
+  width: auto;
   display: block;
   opacity: 0.9;
 }
