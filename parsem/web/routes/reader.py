@@ -98,6 +98,10 @@ def get_document_reader(
         state = new_state
     if chunk is not None:
         state.current_position = max(0, min(chunk, state.high_water_position))
+    # Free Mode is page-load-scoped (Parsem-ci5). Every GET resets it
+    # so a tab reload always returns to paced reading — the deliberate
+    # default. The escape hatch is explicit and never sticky.
+    state.free_mode = False
     state.event_log.open_document(
         document_id=document_id, created_at=state.clock()
     )
@@ -122,9 +126,25 @@ def post_document_close(document_id: int, request: Request) -> Response:
     return Response(status_code=204)
 
 
+def _reject_past_frontier(state: ReaderState) -> None:
+    """Free Mode (Parsem-ci5) lets Space advance ``current_position``
+    past ``high_water``; the user can still SEE those chunks but the
+    'view-only past frontier' rule forbids committing pin / rating
+    state to them. 422 so the JS short-circuits silently."""
+    if state.current_position > state.high_water_position:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"position {state.current_position} is past high_water "
+                f"({state.high_water_position}); free-mode chunks are view-only"
+            ),
+        )
+
+
 @router.post("/pin", response_class=HTMLResponse)
 def post_pin(request: Request) -> HTMLResponse:
     state = _state(request)
+    _reject_past_frontier(state)
     chunk_pos = state.current_position
     new_color = cycle_pin(state.pin_colors.get(chunk_pos))
     now = state.clock()
@@ -263,6 +283,7 @@ def post_return(request: Request) -> HTMLResponse:
 @router.post("/rate", response_class=HTMLResponse)
 def post_rate(request: Request, body: RateBody) -> HTMLResponse:
     state = _state(request)
+    _reject_past_frontier(state)
     try:
         state.event_log.rate_effort(
             document_id=state.document_id,
@@ -284,6 +305,7 @@ def post_unrate(request: Request) -> HTMLResponse:
     UAT — clicking an empty rating dot must not log spurious events).
     """
     state = _state(request)
+    _reject_past_frontier(state)
     chunk_id = state.current_position
     if chunk_id not in state.chunk_ratings:
         return _render_partial(request, state)
@@ -313,6 +335,20 @@ def post_conceal(request: Request) -> HTMLResponse:
 @router.post("/reveal", response_class=HTMLResponse)
 def post_reveal(request: Request) -> HTMLResponse:
     state = _state(request)
+    # Free Mode (Parsem-ci5): bypass the bucket. Space advances current
+    # by one to the document end without spending a token and without
+    # moving high_water. No reveal event is logged — Free Mode is browse,
+    # not reading; paced settling is the only thing that counts toward
+    # progress.
+    if state.free_mode:
+        if state.current_position + 1 < len(state.chunks):
+            state.current_position += 1
+            reason = "advanced_free"
+        else:
+            reason = "end_of_document"
+        response = _render_partial(request, state)
+        response.headers["X-Reveal-Outcome"] = reason
+        return response
     now = state.clock()
     outcome = try_reveal(
         current_position=state.current_position,
@@ -337,3 +373,17 @@ def post_reveal(request: Request) -> HTMLResponse:
     # motion on bucket_empty. See spec §12.5 + Parsem-0if.
     response.headers["X-Reveal-Outcome"] = outcome.reason
     return response
+
+
+@router.post("/free", response_class=HTMLResponse)
+def post_free(request: Request) -> HTMLResponse:
+    """Toggle Free Mode (Parsem-ci5). Free Mode reveals every chunk,
+    suspends the bucket valve, and never advances ``high_water``. Press
+    F again (client-side dispatch) to return to paced. On toggle-OFF,
+    ``current_position`` clamps back to ``high_water_position`` so the
+    user resumes the spine at the frontier rather than past it."""
+    state = _state(request)
+    state.free_mode = not state.free_mode
+    if not state.free_mode and state.current_position > state.high_water_position:
+        state.current_position = state.high_water_position
+    return _render_partial(request, state)

@@ -1,6 +1,7 @@
 <main id="reader-main"
       data-current-position="{{ current_position }}"
-      data-high-water-position="{{ high_water_position }}">
+      data-high-water-position="{{ high_water_position }}"
+      data-free-mode="{{ 'true' if free_mode else 'false' }}">
   <header class="top-bar">
     <a class="top-bar__home" href="/library"
        aria-label="Back to library" title="Back to library">
@@ -18,6 +19,13 @@
         <div class="progress-bar__fill" style="width: {{ progress_percent }}%"></div>
       </div>
     </div>
+    {# Free Mode badge (Parsem-ci5). Renders only when free_mode is on
+       — the surface signal that the bucket valve is suspended. Sits
+       between the progress bar and the token dots; the dots are dimmed
+       to ghost in the same state via [data-free-mode="true"] CSS. #}
+    {% if free_mode %}
+    <span class="free-badge" aria-label="Free Mode active — press F to return to paced">Free</span>
+    {% endif %}
     <div class="top-bar__tokens" aria-label="Reveal tokens"
          style="--regen-seconds: {{ regen_seconds }}s">
       {% for cls, delay in dot_classes %}

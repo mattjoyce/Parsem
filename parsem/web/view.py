@@ -143,7 +143,9 @@ def next_chunk(chunks: list[Chunk], high_water: int) -> Chunk | None:
     return None
 
 
-def revealed_chunks(chunks: list[Chunk], high_water: int) -> list[Chunk]:
+def revealed_chunks(
+    chunks: list[Chunk], high_water: int, *, free_mode: bool = False
+) -> list[Chunk]:
     """All chunks ever revealed in this session, INCLUDING the chunk
     just revealed at the frontier (`high_water_position`).
 
@@ -155,9 +157,11 @@ def revealed_chunks(chunks: list[Chunk], high_water: int) -> list[Chunk]:
     must keep them visible. Hiding chunks 6-10 when the reader clicks
     back to chunk 5 would break the trail they were reading.
 
-    Supersedes the Parsem-apa section-clamped sliding window. The
-    .chunk--current vertical bar marks "now"; everything else carries
-    its full settled rendering (claude-axx — settled opacity is 1.0)."""
+    Free Mode (Parsem-ci5): returns the whole document so the reader
+    can browse every chunk without spending tokens. high_water still
+    bounds *interaction* (rate/pin/click) — see route gates."""
+    if free_mode:
+        return list(chunks)
     return chunks[: high_water + 1]
 
 
@@ -214,9 +218,15 @@ def build_reader_context(state: ReaderState) -> dict[str, Any]:
     """
     visible = [
         VisibleChunk(chunk=c, html=render_chunk_html(c.text))
-        for c in revealed_chunks(state.chunks, state.high_water_position)
+        for c in revealed_chunks(
+            state.chunks, state.high_water_position, free_mode=state.free_mode
+        )
     ]
-    upcoming = next_chunk(state.chunks, state.high_water_position)
+    # Free Mode (Parsem-ci5): every chunk is visible, the bucket valve
+    # is suspended, and the inline reveal glyph would be a lie (Space
+    # doesn't consume tokens here). Suppress the preview + glyph; the
+    # "Free" badge in the top bar is the surface signal.
+    upcoming = None if state.free_mode else next_chunk(state.chunks, state.high_water_position)
     upcoming_visible = (
         VisibleChunk(chunk=upcoming, html=render_chunk_html(upcoming.text))
         if upcoming is not None
@@ -266,4 +276,5 @@ def build_reader_context(state: ReaderState) -> dict[str, Any]:
         "regen_seconds": state.bucket_config.regen_seconds,
         "next_chunk": upcoming_visible,
         "bucket_empty": bucket_empty,
+        "free_mode": state.free_mode,
     }

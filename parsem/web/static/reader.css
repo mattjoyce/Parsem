@@ -213,6 +213,35 @@ body {
 }
 .dot { display: inline-block; transition: opacity 0.2s ease; }
 .dot--filled { opacity: 1; color: var(--ink); }
+
+/* Free Mode badge (Parsem-ci5) — the only surface signal that the
+ * bucket valve is suspended. Sits between the progress bar and the
+ * token dots, mirroring their visual weight: small, dimmed, no chrome.
+ * The bracket-and-dot pictograph is reserved for tokens; the badge is
+ * a plain word, deliberately quiet so it doesn't compete with the doc
+ * title or the reading body. Hover/title gives the cue that F toggles. */
+.free-badge {
+  font-size: 0.7em;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 0.2em 0.55em;
+  border: 1px solid var(--tint-2);
+  border-radius: 2px;
+  color: var(--ink);
+  opacity: 0.75;
+  line-height: 1;
+  white-space: nowrap;
+}
+/* When Free Mode is on, ghost the bucket dots — they're meaningless
+ * while the valve is suspended. Removes the live regen animation so
+ * the dot row doesn't strobe under a badge that says "this is
+ * suspended". Same idea as making the reveal glyph disappear from
+ * the current chunk: the affordance must read as unavailable. */
+[data-free-mode="true"] .top-bar__tokens .dot {
+  opacity: 0.18;
+  animation: none;
+}
 /* Every not-yet-full dot uses .dot--regen with a staggered animation-delay,
  * so the cascade plays out client-side over `open_count * regen_seconds`
  * without server polling. The dot at delay 0 begins regenerating

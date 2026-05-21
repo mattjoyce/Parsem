@@ -60,6 +60,10 @@ class ReaderState:
     # mutate this dict alongside the event log so the next render
     # has the new state without re-querying the DB.
     chunk_ratings: dict[int, int] = field(default_factory=dict)
+    # Free Mode (Parsem-ci5): browse all chunks, suspend the bucket
+    # valve, and never advance high_water. Session-scoped — reset to
+    # False on every GET /documents/{id}/reader.
+    free_mode: bool = False
     clock: Callable[[], datetime] = field(default=_utcnow)
 
 

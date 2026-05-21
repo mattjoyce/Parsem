@@ -30,6 +30,13 @@
     "'":         { method: "POST", url: "/return" },
   };
 
+  // Free Mode toggle action (Parsem-ci5). Dispatched outside ACTIONS so
+  // the keydown handler can route F around the §8.1 return-first guard
+  // — pressing F should always toggle Free Mode, regardless of scroll
+  // position. Routing through dispatch() would silently eat the first
+  // press whenever the reader is scrolled away.
+  const FREE_MODE_ACTION = { method: "POST", url: "/free" };
+
   // 1..5 keys are NOT in ACTIONS because they need toggle-aware
   // routing: keypress N with rating==N clears, otherwise sets to N.
   // Mirrors the click semantics on rating dots (§7.4 / §8a.1 /
@@ -318,6 +325,15 @@
     if (event.key === " ") {
       event.preventDefault();
       dispatch(spaceActionForState());
+      return;
+    }
+
+    // Free Mode toggle — bypasses return-first; F is meta, not a
+    // reading action (Parsem-ci5). Handle both cases so Shift+F works
+    // identically to plain F, matching the existing p/P pairing.
+    if (event.key === "f" || event.key === "F") {
+      event.preventDefault();
+      performAction(FREE_MODE_ACTION);
       return;
     }
 
