@@ -335,6 +335,65 @@ def compute_silhouette_buckets(
     return result
 
 
+@dataclass(frozen=True)
+class DrawerSection:
+    """One section in the library v2 drawer's full-resolution heatmap
+    (ADR 0005). `title` is the section heading text (empty for the
+    pre-first-heading lead). `cells` is one `BucketState` per chunk in
+    the section — no down-sampling, so cell `i` represents the chunk
+    at the section's i-th position. Rated cells carry the chunk's own
+    rating (no mean — there's only one chunk per cell).
+
+    Reuses BucketState as the value type; `mean_rating` on a single-
+    chunk cell is just that chunk's rating value."""
+
+    title: str
+    cells: list[BucketState]
+
+
+def compute_drawer_sections(
+    section_layout: list[tuple[str, int]],
+    chunk_ratings: list[int | None],
+    high_water_position: int,
+) -> list[DrawerSection]:
+    """Render the drawer's section-aware full heatmap (ADR 0005).
+    Pure function — no DB access. One cell per chunk, grouped by
+    section, with the same three-state semantics as the tile
+    silhouette (unread / read_unrated / rated).
+
+    `section_layout` is `(title, chunk_count)` in section order; we
+    walk it concurrently with `chunk_ratings`. If section_layout is
+    empty (doc not parsed yet) returns an empty list — the drawer
+    template hides the heatmap section in that case.
+    """
+    if not section_layout:
+        return []
+    result: list[DrawerSection] = []
+    chunk_pos = 0
+    total_chunks = len(chunk_ratings)
+    for title, count in section_layout:
+        cells: list[BucketState] = []
+        for _ in range(count):
+            if chunk_pos >= high_water_position:
+                cells.append(BucketState("unread"))
+            elif chunk_pos >= total_chunks:
+                # Section layout claims more chunks than we have
+                # ratings for — defensive 'unread' fallback. Should
+                # not happen in practice (the layout is built from
+                # the same `sections` table chunk_ratings indexes
+                # into) but keeps the renderer safe.
+                cells.append(BucketState("unread"))
+            else:
+                rating = chunk_ratings[chunk_pos]
+                if rating is None:
+                    cells.append(BucketState("read_unrated"))
+                else:
+                    cells.append(BucketState("rated", mean_rating=rating))
+            chunk_pos += 1
+        result.append(DrawerSection(title=title, cells=cells))
+    return result
+
+
 def derive_source_domain(source_type: str, original_path: str) -> str | None:
     """Pull the registrable host from a URL-ingested doc's stored URL.
 
@@ -394,6 +453,14 @@ class LibraryRow:
     tags: list[str]
     section_layout: list[tuple[str, int]] = field(default_factory=list)
     silhouette_buckets: list[BucketState] = field(default_factory=list)
+    # Drawer-shape data (Parsem-7wu.3). current_position / high_water
+    # are exposed so the drawer can render "chunk x of N" stats and the
+    # full-resolution heatmap walks the same partition the silhouette
+    # uses. drawer_sections is the pre-computed section-aware heatmap
+    # body (always-list, may be empty when the doc isn't parsed).
+    current_position: int = 0
+    high_water_position: int = 0
+    drawer_sections: list[DrawerSection] = field(default_factory=list)
 
 
 def progress_percent(total_chunks: int | None, current_position: int | None) -> int:
@@ -472,6 +539,9 @@ def list_library_rows(conn: sqlite3.Connection) -> list[LibraryRow]:
             else []
         )
         silhouette = compute_silhouette_buckets(ratings, high_water)
+        drawer_sections = compute_drawer_sections(
+            section_layout, ratings, high_water
+        )
 
         result.append(LibraryRow(
             document=doc,
@@ -489,6 +559,9 @@ def list_library_rows(conn: sqlite3.Connection) -> list[LibraryRow]:
             tags=tags_by_doc.get(doc.id, []),
             section_layout=section_layout,
             silhouette_buckets=silhouette,
+            current_position=row["current_position"] or 0,
+            high_water_position=high_water,
+            drawer_sections=drawer_sections,
         ))
     return result
 

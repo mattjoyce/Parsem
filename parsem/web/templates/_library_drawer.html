@@ -1,0 +1,107 @@
+{# Per-doc detail drawer — ADR 0005, bd Parsem-7wu.3. One drawer per
+   tile, rendered server-side hidden by default; library.js toggles
+   visibility on tile click. Single drawer visible at a time enforced
+   by the shared .library-drawer-overlay scrim. Context shape mirrors
+   _library_tile.html (`row`, `title_max_len`); the slug uses the
+   same source_label() global and `relative_date` filter. #}
+{% set doc = row.document %}
+{% set total_minutes_remaining = (
+  ((row.total_reading_seconds * (100 - row.progress_percent) / 100) / 60)|round(0, 'common')|int
+) %}
+<aside id="library-drawer-{{ doc.id }}" class="library-drawer" data-doc-id="{{ doc.id }}" hidden aria-hidden="true">
+  <button type="button" class="library-drawer__close" aria-label="Close" title="Close (Esc)">✕</button>
+
+  <h2 class="library-drawer__title">
+    <span class="library-drawer__title-text">{{ doc.title }}</span>
+  </h2>
+
+  <p class="library-drawer__slug">
+    <span class="library-drawer__source">{{ source_label(doc.source_type, row.source_domain) }}</span>
+    <span class="library-drawer__sep" aria-hidden="true">·</span>
+    <span class="library-drawer__date">{{ row.ingest_date.date().isoformat() }}</span>
+  </p>
+
+  <a class="library-drawer__open" href="/documents/{{ doc.id }}/reader">
+    Open
+  </a>
+
+  {% if row.drawer_sections %}
+  {# Full-resolution section-aware heatmap (ADR 0005). One row per
+     section, one cell per chunk. Same three-state palette as the
+     tile silhouette, but rated cells take the chunk's own rating
+     value (no down-sampling). #}
+  <section class="library-drawer__heatmap" aria-label="Reading map">
+    {% for section in row.drawer_sections %}
+    <div class="library-drawer__section">
+      <span class="library-drawer__section-label" title="{{ section.title }}">{{ section.title or '§' }}</span>
+      <div class="library-drawer__section-cells">
+        {% for cell in section.cells %}
+        <span class="library-drawer__cell library-drawer__cell--{{ cell.kind }}{% if cell.mean_rating %} library-drawer__cell--rated-{{ cell.mean_rating }}{% endif %}"></span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  <dl class="library-drawer__stats">
+    {% if doc.total_chunks %}
+    <div><dt>Progress</dt><dd>{{ row.progress_percent }}%</dd></div>
+    <div><dt>Position</dt><dd>chunk {{ row.current_position + 1 }} of {{ doc.total_chunks }}</dd></div>
+    {% if row.total_reading_seconds and row.progress_percent < 100 %}
+    <div><dt>Remaining</dt><dd>~{{ total_minutes_remaining }} min</dd></div>
+    {% endif %}
+    {% endif %}
+    <div><dt>Pins</dt><dd>{{ row.pin_count }}</dd></div>
+    {% if row.last_opened %}
+    <div><dt>Last opened</dt><dd>{{ row.last_opened|relative_date }}</dd></div>
+    {% endif %}
+  </dl>
+
+  {% if row.tags %}
+  {# Tag chips — display-only in this child. Add/remove ships in
+     Parsem-7wu.5 (tag CRUD endpoints + chip-row filter on the
+     control strip). #}
+  <div class="library-drawer__tags">
+    {% for tag in row.tags %}<span class="library-drawer__chip">{{ tag }}</span>{% endfor %}
+  </div>
+  {% endif %}
+
+  {% if doc.source_type == 'url' %}
+  <p class="library-drawer__source-url">
+    <a href="{{ doc.original_path }}" target="_blank" rel="noopener">{{ doc.original_path }}</a>
+  </p>
+  {% endif %}
+
+  {% if doc.status != 'ready' %}
+  <div class="library-drawer__status library-status-{{ doc.status }}">
+    {{ doc.status }}{% if doc.status == 'failed' and doc.failure_reason %}
+    <span class="library-failure-reason">— {{ doc.failure_reason }}</span>
+    {% elif doc.status == 'converting' %}
+    <span class="library-converting-hint">— PDF → Markdown</span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <footer class="library-drawer__actions">
+    {% if doc.status == 'ready' %}
+    <button type="button" class="library-rename" data-doc-id="{{ doc.id }}"
+            data-current-title="{{ doc.title }}"
+            data-max-len="{{ title_max_len }}">Rename</button>
+    <form method="post" action="/documents/{{ doc.id }}/retry-parse"
+          class="library-action-form"
+          onsubmit="return confirm('Re-chunk &quot;{{ doc.title }}&quot;? Your reading position is preserved.');">
+      <button type="submit" class="library-rechunk">Re-chunk</button>
+    </form>
+    {% elif doc.status == 'failed' %}
+    <form method="post" action="/documents/{{ doc.id }}/retry-parse" class="library-action-form">
+      <button type="submit" class="library-retry">Retry</button>
+    </form>
+    {% endif %}
+    <form method="post" action="/documents/{{ doc.id }}/delete"
+          class="library-action-form"
+          onsubmit="return confirm('Delete &quot;{{ doc.title }}&quot;? This cannot be undone.');">
+      <button type="submit" class="library-delete">Delete</button>
+    </form>
+  </footer>
+</aside>

@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from parsem.ingest import layout
 from parsem.store.documents import (
     LibraryRow,
+    compute_drawer_sections,
     compute_silhouette_buckets,
     delete_document,
     derive_source_domain,
@@ -118,15 +119,17 @@ def post_rename(
     # gets a faithful single-row context (ADR 0005, Parsem-7wu.2).
     progress = progress_percent_for_document(conn, document_id)
     chunk_ratings = load_chunk_ratings_dense(conn, document_id, doc.total_chunks)
-    high_water_row = conn.execute(
-        "SELECT high_water_position, updated_at AS last_opened_at"
+    state_row = conn.execute(
+        "SELECT current_position, high_water_position,"
+        " updated_at AS last_opened_at"
         " FROM reading_state WHERE document_id = ?",
         (document_id,),
     ).fetchone()
-    high_water = high_water_row["high_water_position"] if high_water_row else 0
+    current_position = state_row["current_position"] if state_row else 0
+    high_water = state_row["high_water_position"] if state_row else 0
     last_opened = (
-        datetime.fromisoformat(high_water_row["last_opened_at"])
-        if high_water_row and high_water_row["last_opened_at"]
+        datetime.fromisoformat(state_row["last_opened_at"])
+        if state_row and state_row["last_opened_at"]
         else None
     )
     pin_count_row = conn.execute(
@@ -138,6 +141,11 @@ def post_rename(
         " FROM chunks WHERE document_id = ?",
         (document_id,),
     ).fetchone()
+    section_layout = (
+        load_section_layout(conn, document_id)
+        if updated.status == "ready" and (updated.total_chunks or 0) > 0
+        else []
+    )
     row = LibraryRow(
         document=updated,
         progress_percent=progress,
@@ -150,12 +158,13 @@ def post_rename(
         pin_count=pin_count_row["n"] if pin_count_row else 0,
         total_reading_seconds=float(total_seconds_row["s"]) if total_seconds_row else 0.0,
         tags=list_tags_for_doc(conn, document_id),
-        section_layout=(
-            load_section_layout(conn, document_id)
-            if updated.status == "ready" and (updated.total_chunks or 0) > 0
-            else []
-        ),
+        section_layout=section_layout,
         silhouette_buckets=compute_silhouette_buckets(chunk_ratings, high_water),
+        current_position=current_position,
+        high_water_position=high_water,
+        drawer_sections=compute_drawer_sections(
+            section_layout, chunk_ratings, high_water
+        ),
     )
     templates = request.app.state.templates
     return templates.TemplateResponse(

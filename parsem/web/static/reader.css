@@ -639,8 +639,10 @@ body {
   margin-top: 1rem;
 }
 
-/* Tile shape — squarish, slightly taller than wide. The min-height
- * keeps tiles uniform even when a doc has no status badge. */
+/* Tile shape — squarish, slightly taller than wide. The whole tile
+ * is the click affordance (ADR 0005, Parsem-7wu.3) — opens the
+ * side-drawer. min-height keeps tiles uniform even when a doc has no
+ * status badge. */
 .library-tile {
   position: relative;
   display: flex;
@@ -651,38 +653,37 @@ body {
   border: 1px solid var(--tint-2);
   border-radius: 8px;
   min-height: 220px;
+  cursor: pointer;
   transition: border-color 120ms ease, box-shadow 120ms ease;
 }
-.library-tile:hover {
+.library-tile:hover,
+.library-tile:focus-within {
   border-color: var(--tint-3);
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.04);
+}
+.library-tile:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .library-tile--failed { border-color: var(--rating-5); }
 .library-tile--converting { border-style: dashed; }
 
 /* Title — primary recognition mark (ADR 0005, Q1/Q2). Two-line
- * ellipsis via line-clamp; native `title=` attribute on the link is
- * the hover-tooltip safety net for long names. */
+ * ellipsis via line-clamp; the article's title= attribute carries
+ * the full-title hover tooltip. */
 .library-tile__title {
   margin: 0;
   font-size: 1.02rem;
   line-height: 1.3;
   font-weight: 600;
 }
-.library-tile__title-link {
+.library-tile__title-text {
   color: var(--ink);
-  text-decoration: none;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   word-break: break-word;
-}
-.library-tile__title-link:hover { text-decoration: underline; }
-.library-tile__title-link:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-  border-radius: 3px;
 }
 
 /* 5x5 silhouette — quiet 'brand colour' mark. Each cell encodes one
@@ -754,59 +755,216 @@ body {
 .library-failure-reason { opacity: 0.85; }
 .library-converting-hint { opacity: 0.65; font-size: 0.85em; }
 
-/* Transitional per-tile actions menu (bd Parsem-7wu.2). <details>
- * gives keyboard + click toggle for free; absolute-positioned in the
- * top-right corner so it floats over the title without affecting
- * layout. Removed in Parsem-7wu.3 when the drawer absorbs actions. */
-.library-tile__menu {
-  position: absolute;
-  top: 0.4rem;
-  right: 0.45rem;
+/* === Library v2 — side-drawer detail panel ==========================
+ * ADR 0005, bd Parsem-7wu.3. Click a tile → drawer slides in from the
+ * right with the full doc detail and actions. Esc / backdrop / close
+ * button dismiss. One drawer open at a time (enforced by the JS layer
+ * — only the active drawer drops [hidden]). */
+
+.library-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: rgba(20, 18, 14, 0.42);  /* matches the prefs overlay */
 }
-.library-tile__menu-trigger {
-  cursor: pointer;
-  font-size: 1.1rem;
-  line-height: 1;
-  padding: 0.05em 0.4em;
-  border-radius: 4px;
-  color: var(--tint-3);
-  list-style: none;
-  user-select: none;
-}
-.library-tile__menu-trigger::-webkit-details-marker { display: none; }
-.library-tile__menu-trigger:hover { background: var(--tint-1); color: var(--ink); }
-.library-tile__menu[open] .library-tile__menu-trigger { background: var(--tint-1); color: var(--ink); }
-.library-tile__menu-items {
-  position: absolute;
-  top: 1.7em;
+.library-drawer-overlay[hidden] { display: none; }
+
+.library-drawer {
+  position: fixed;
+  top: 0;
   right: 0;
+  bottom: 0;
+  width: min(440px, 100%);
+  z-index: 61;
   background: var(--bg);
-  border: 1px solid var(--tint-2);
-  border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
-  padding: 0.3em;
+  color: var(--ink);
+  border-left: 1px solid var(--tint-2);
+  box-shadow: -8px 0 28px rgba(20, 18, 14, 0.18);
+  overflow-y: auto;
+  padding: 1.1rem 1.25rem 1.4rem;
+  font-family: var(--prose-font);
   display: flex;
   flex-direction: column;
-  gap: 0.15em;
-  min-width: 8em;
-  z-index: 5;
+  gap: 0.85rem;
 }
-.library-tile__menu-items button,
-.library-tile__menu-items .library-action-form button {
+.library-drawer[hidden] { display: none; }
+
+.library-drawer__close {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.6rem;
   appearance: none;
   background: transparent;
   border: 0;
-  padding: 0.35em 0.6em;
-  font: inherit;
-  text-align: left;
-  color: var(--ink);
+  font-size: 1rem;
+  padding: 0.2em 0.45em;
+  border-radius: 5px;
+  color: var(--tint-3);
   cursor: pointer;
-  border-radius: 4px;
-  width: 100%;
 }
-.library-tile__menu-items button:hover { background: var(--tint-1); }
-.library-tile__menu-items .library-delete:hover { background: rgba(194, 78, 58, 0.12); }
-.library-tile__menu-items .library-action-form { margin: 0; }
+.library-drawer__close:hover { background: var(--tint-1); color: var(--ink); }
+
+.library-drawer__title {
+  margin: 0.2rem 2.2rem 0 0;
+  font-size: 1.25rem;
+  line-height: 1.25;
+  font-weight: 700;
+}
+.library-drawer__title-text { word-break: break-word; }
+
+.library-drawer__slug {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--tint-3);
+  display: flex;
+  align-items: baseline;
+  gap: 0.4em;
+  flex-wrap: wrap;
+}
+.library-drawer__source { font-weight: 600; opacity: 0.85; color: var(--ink); }
+.library-drawer__sep { opacity: 0.6; }
+
+.library-drawer__open {
+  display: inline-block;
+  align-self: flex-start;
+  padding: 0.45em 1.2em;
+  background: var(--accent);
+  color: var(--bg);
+  text-decoration: none;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-top: 0.2rem;
+}
+.library-drawer__open:hover { filter: brightness(1.08); }
+.library-drawer__open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Full-resolution section-aware heatmap. Each section is a row of
+ * chunk-level cells; cells follow the same three-state palette as
+ * the tile silhouette but rated cells use the chunk's own rating. */
+.library-drawer__heatmap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-top: 0.3rem;
+}
+.library-drawer__section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.18rem;
+}
+.library-drawer__section-label {
+  font-size: 0.78rem;
+  color: var(--tint-3);
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.library-drawer__section-cells {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+.library-drawer__cell {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background: transparent;
+  border: 1px solid transparent;
+}
+.library-drawer__cell--unread { border-color: var(--tint-2); }
+.library-drawer__cell--read_unrated { background: var(--tint-2); }
+.library-drawer__cell--rated-1 { background: var(--rating-1); }
+.library-drawer__cell--rated-2 { background: var(--rating-2); }
+.library-drawer__cell--rated-3 { background: var(--rating-3); }
+.library-drawer__cell--rated-4 { background: var(--rating-4); }
+.library-drawer__cell--rated-5 { background: var(--rating-5); }
+
+/* Stats — definition list, key/value pairs. Compact two-column grid. */
+.library-drawer__stats {
+  margin: 0.2rem 0 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.18rem 0.8rem;
+  font-size: 0.85rem;
+}
+.library-drawer__stats > div { display: contents; }
+.library-drawer__stats dt {
+  color: var(--tint-3);
+  font-weight: 500;
+}
+.library-drawer__stats dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.library-drawer__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.1rem;
+}
+.library-drawer__chip {
+  font-size: 0.78rem;
+  padding: 0.15em 0.55em;
+  border-radius: 999px;
+  background: var(--tint-1);
+  color: var(--ink);
+  border: 1px solid var(--tint-2);
+}
+
+.library-drawer__source-url {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--tint-3);
+  word-break: break-all;
+}
+.library-drawer__source-url a { color: var(--ink); opacity: 0.7; }
+.library-drawer__source-url a:hover { opacity: 1; }
+
+.library-drawer__status {
+  font-size: 0.82rem;
+  padding: 0.4em 0.7em;
+  border-radius: 5px;
+  background: var(--tint-1);
+}
+
+.library-drawer__actions {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding-top: 0.8rem;
+  border-top: 1px solid var(--tint-2);
+}
+.library-drawer__actions button,
+.library-drawer__actions .library-action-form button {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--tint-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.35em 0.85em;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.library-drawer__actions button:hover { background: var(--tint-1); }
+.library-drawer__actions .library-delete:hover {
+  background: rgba(194, 78, 58, 0.12);
+  border-color: var(--rating-5);
+}
+.library-drawer__actions .library-action-form { margin: 0; }
+
+/* When the drawer is in rename-edit mode, the title span is swapped
+ * for an input that reuses the library-rename-input look. */
+.library-drawer__title .library-rename-input { font-size: 1.25rem; }
 
 /* Inline rename — input replaces the title text within the link.
  * Same shape as v1; updated selector lookup in library.js. */

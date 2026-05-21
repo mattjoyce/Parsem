@@ -259,12 +259,18 @@ def test_reparse_document_falls_back_to_original_path(
 
 
 def _row_html(library_html: str, doc_id: int) -> str:
-    """Slice out one document's full `<article>…</article>` tile from
-    the library HTML. Migrated from row to tile markup in Parsem-7wu.2
-    (ADR 0005)."""
+    """Slice out one document's tile + drawer fragment from the library
+    HTML. In v2 (ADR 0005, Parsem-7wu.{2,3}) the tile (<article>) and
+    drawer (<aside>) live as siblings at the page level; per-doc
+    actions moved to the drawer in Parsem-7wu.3. The slice spans
+    everything from the tile's opening tag to the drawer's closing
+    </aside> so tests can assert on either surface."""
     start = library_html.index(f'<article id="library-tile-{doc_id}"')
-    end = library_html.index("</article>", start) + len("</article>")
-    return library_html[start:end]
+    drawer_close = library_html.index(
+        "</aside>",
+        library_html.index(f'<aside id="library-drawer-{doc_id}"'),
+    ) + len("</aside>")
+    return library_html[start:drawer_close]
 
 
 # ─── Reading-state re-anchor on new chunking_run (claude-jtu) ─────────

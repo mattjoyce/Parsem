@@ -34,7 +34,9 @@
 
   {% if rows %}
   {# 3 columns desktop / 2 narrow / 1 mobile via CSS Grid auto-fill.
-     Each tile owns its layout — see _library_tile.html. #}
+     Each tile owns its layout — see _library_tile.html. The
+     corresponding per-doc drawer is rendered hidden below; the JS
+     toggles visibility on tile click (ADR 0005, bd Parsem-7wu.3). #}
   <section class="library-grid">
     {% for row in rows %}
       {% include "_library_tile.html" %}
@@ -46,6 +48,16 @@
   </p>
   {% endif %}
 </main>
+
+{# Shared backdrop scrim (one element regardless of doc count); the JS
+   toggles [hidden] when any drawer opens. Click → close the open
+   drawer. #}
+<div class="library-drawer-overlay" hidden></div>
+
+{% for row in rows %}
+{% include "_library_drawer.html" %}
+{% endfor %}
+
 {% include "_prefs_panel.html" %}
 <script src="/static/prefs.js" defer></script>
 <script src="/static/library.js" defer></script>

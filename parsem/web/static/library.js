@@ -1,28 +1,93 @@
-// Library inline rename. Spec §22; beads Parsem-kwq, Parsem-7wu.2.
-//
-// v2 (Parsem-7wu.2): the row is now an <article class="library-tile">.
-// Click "Rename" in the per-tile menu → the title <a> is replaced by an
-// <input> inside the same <h2>. Enter or blur commits via POST
-// /documents/{id}/rename; the server returns the tile's <article>
-// fragment, which we outerHTML-swap into place. Esc cancels. Opening
-// the editor also collapses the tile's <details> menu so the input
-// has the visual stage to itself.
+// Library v2 — tile click → drawer, drawer dismiss, inline rename
+// (in drawer), and URL ingest. ADR 0005; beads Parsem-kwq + Parsem-7wu.{2,3}.
 
 (function () {
   "use strict";
 
-  function openEditor(button) {
-    const tile = button.closest(".library-tile");
-    if (!tile) return;
-    const docId = button.dataset.docId;
-    const titleEl = tile.querySelector(".library-tile__title");
-    const link = titleEl && titleEl.querySelector(".library-tile__title-link");
-    if (!link) return;  // already in edit mode
-    const currentTitle = button.dataset.currentTitle || link.textContent.trim();
+  // === Drawer open / close ============================================
+  //
+  // Each doc has its own pre-rendered drawer hidden in the DOM
+  // (see _library_drawer.html). Click a tile → drop [hidden] on the
+  // matching drawer + overlay; Esc / backdrop / close button hide
+  // them again. Only one drawer is visible at a time — opening one
+  // closes any other that was open.
 
-    // Collapse the actions menu so it doesn't loom over the input.
-    const menu = tile.querySelector(".library-tile__menu");
-    if (menu) menu.removeAttribute("open");
+  const overlay = document.querySelector(".library-drawer-overlay");
+  let activeDrawer = null;
+
+  function openDrawer(docId) {
+    const drawer = document.getElementById(`library-drawer-${docId}`);
+    if (!drawer) return;
+    if (activeDrawer && activeDrawer !== drawer) closeDrawer();
+    drawer.removeAttribute("hidden");
+    drawer.removeAttribute("aria-hidden");
+    if (overlay) overlay.removeAttribute("hidden");
+    activeDrawer = drawer;
+    // Focus the close button for keyboard users.
+    const closeBtn = drawer.querySelector(".library-drawer__close");
+    if (closeBtn) closeBtn.focus({ preventScroll: true });
+  }
+
+  function closeDrawer() {
+    if (!activeDrawer) return;
+    activeDrawer.setAttribute("hidden", "");
+    activeDrawer.setAttribute("aria-hidden", "true");
+    if (overlay) overlay.setAttribute("hidden", "");
+    activeDrawer = null;
+  }
+
+  // Tile click → drawer. Use event delegation so dynamically swapped
+  // tiles (after rename) keep working without re-binding.
+  document.addEventListener("click", (ev) => {
+    const tile = ev.target.closest(".library-tile");
+    if (tile && !ev.target.closest(".library-drawer")) {
+      ev.preventDefault();
+      openDrawer(tile.dataset.docId);
+      return;
+    }
+    if (ev.target.closest(".library-drawer__close")) {
+      ev.preventDefault();
+      closeDrawer();
+      return;
+    }
+    if (ev.target.classList.contains("library-drawer-overlay")) {
+      ev.preventDefault();
+      closeDrawer();
+    }
+  });
+
+  // Keyboard activation on tiles (Enter/Space) + Esc to close.
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && activeDrawer) {
+      ev.preventDefault();
+      closeDrawer();
+      return;
+    }
+    if ((ev.key === "Enter" || ev.key === " ") &&
+        ev.target.matches && ev.target.matches(".library-tile")) {
+      ev.preventDefault();
+      openDrawer(ev.target.dataset.docId);
+    }
+  });
+
+  // === Inline rename in the drawer ====================================
+  //
+  // Click "Rename" inside the drawer → the drawer title span is
+  // replaced by an <input>. Enter or blur commits via POST
+  // /documents/{id}/rename; the server returns the tile partial,
+  // which outerHTML-swaps the matching tile in the grid. The drawer
+  // also gets its title-text updated client-side so the open drawer
+  // reflects the new name without a reload.
+
+  function openEditor(button) {
+    const drawer = button.closest(".library-drawer");
+    if (!drawer) return;
+    const docId = button.dataset.docId;
+    const titleEl = drawer.querySelector(".library-drawer__title");
+    const span = titleEl && titleEl.querySelector(".library-drawer__title-text");
+    if (!span) return;  // already in edit mode
+
+    const currentTitle = button.dataset.currentTitle || span.textContent.trim();
 
     const input = document.createElement("input");
     input.type = "text";
@@ -31,7 +96,7 @@
     if (maxLen > 0) input.maxLength = maxLen;
     input.className = "library-rename-input";
     input.dataset.original = currentTitle;
-    titleEl.replaceChild(input, link);
+    titleEl.replaceChild(input, span);
     button.disabled = true;
     input.focus();
     input.select();
@@ -41,7 +106,7 @@
     const cancel = () => {
       if (settled) return;
       settled = true;
-      titleEl.replaceChild(link, input);
+      titleEl.replaceChild(span, input);
       button.disabled = false;
     };
 
@@ -69,7 +134,19 @@
         const tmpl = document.createElement("template");
         tmpl.innerHTML = html.trim();
         const newTile = tmpl.content.querySelector(".library-tile");
-        if (newTile) tile.replaceWith(newTile);
+        const oldTile = document.getElementById(`library-tile-${docId}`);
+        if (newTile && oldTile) oldTile.replaceWith(newTile);
+
+        // Sync the drawer's title (pre-rendered with the old value).
+        span.textContent = next;
+        titleEl.replaceChild(span, input);
+        button.disabled = false;
+        button.dataset.currentTitle = next;
+        // Also keep the drawer's aria-label / title attributes in
+        // sync where the old title was used.
+        drawer.querySelectorAll(`[data-doc-id="${docId}"]`).forEach((el) => {
+          if (el.dataset.currentTitle) el.dataset.currentTitle = next;
+        });
       } catch (_err) {
         settled = false;
         input.classList.add("library-rename-error");
@@ -87,7 +164,6 @@
       }
     });
     input.addEventListener("blur", () => {
-      // Defer so the keydown handler's commit() (which sets settled) runs first.
       setTimeout(() => { if (!settled) commit(); }, 0);
     });
   }
@@ -100,11 +176,10 @@
     }
   });
 
-  // URL-ingest form — POSTs to /ingest/url which submits the URL to
-  // ductile's firecrawl plugin (ADR 0003, bd claude-5fp). The endpoint
-  // returns 202 immediately with a doc_id; the actual scrape lands as
-  // a file in inbound/converted/ shortly after, where the existing
-  // filewatch ingest flips the row to ready.
+  // === URL ingest =====================================================
+  // POSTs to /ingest/url which submits via ductile firecrawl (ADR 0003,
+  // bd claude-5fp). Same flow as v1; demoted to a modal in Parsem-7wu.6.
+
   const urlForm = document.getElementById("ingest-url-form");
   if (urlForm) {
     urlForm.addEventListener("submit", async (ev) => {
@@ -134,10 +209,6 @@
           alert("Failed to add URL: " + reason);
           return;
         }
-        // 202 — the converting row is in the library; reload to show it.
-        // Brief delay so the row renders with the placeholder; firecrawl
-        // will then flip it to ready when the .md lands and filewatch
-        // catches up.
         setTimeout(() => window.location.reload(), 400);
       } finally {
         if (submit) submit.disabled = false;

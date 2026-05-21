@@ -1,23 +1,30 @@
-{# Single library tile — ADR 0005, bd Parsem-7wu.2. Replaces the
-   row-shaped _library_row.html partial. Context shape:
+{# Single library tile — ADR 0005, bd Parsem-7wu.{2,3}. In v2.0 the
+   whole tile is the click affordance — click anywhere opens the
+   side-drawer (rendered as a sibling per doc; see _library_drawer.html).
+   The drawer's "Open" button is the only path from library to reader.
+
+   Context shape:
      row.document             — Document
      row.progress_percent     — int (0..100)
      row.source_domain        — str | None
      row.ingest_date          — datetime
      row.silhouette_buckets   — list[BucketState] (always 25)
      title_max_len            — int (for inline rename input)
-   The {% set %} aliases keep the markup readable. #}
+#}
 {% set doc = row.document %}
 <article id="library-tile-{{ doc.id }}" class="library-tile{% if doc.status == 'failed' %} library-tile--failed{% elif doc.status == 'converting' %} library-tile--converting{% endif %}"
-         data-doc-id="{{ doc.id }}">
+         data-doc-id="{{ doc.id }}"
+         tabindex="0"
+         role="button"
+         aria-label="Open details for {{ doc.title }}"
+         title="{{ doc.title }}">
   <h2 class="library-tile__title">
-    <a class="library-tile__title-link" href="/documents/{{ doc.id }}/reader"
-       title="{{ doc.title }}">{{ doc.title }}</a>
+    <span class="library-tile__title-text">{{ doc.title }}</span>
   </h2>
 
   {# 5x5 silhouette mark — quiet background signal per ADR 0005.
      Always 25 cells. aria-hidden because the silhouette is decorative;
-     the title link carries the navigation affordance. #}
+     the article's aria-label carries the recognition signal. #}
   <div class="library-tile__silhouette" aria-hidden="true">
     {% for bucket in row.silhouette_buckets %}
     <span class="library-tile__cell library-tile__cell--{{ bucket.kind }}{% if bucket.mean_rating %} library-tile__cell--rated-{{ bucket.mean_rating }}{% endif %}"></span>
@@ -43,32 +50,4 @@
     {% endif %}
   </div>
   {% endif %}
-
-  {# Transitional actions menu (bd Parsem-7wu.2). Removed in the drawer
-     child (Parsem-7wu.3) when the drawer absorbs rename/re-chunk/delete.
-     <details>/<summary> gives keyboard + click toggle for free. #}
-  <details class="library-tile__menu">
-    <summary class="library-tile__menu-trigger" aria-label="Actions for {{ doc.title }}" title="Actions">⋯</summary>
-    <div class="library-tile__menu-items">
-      {% if doc.status == 'ready' %}
-      <button type="button" class="library-rename" data-doc-id="{{ doc.id }}"
-              data-current-title="{{ doc.title }}"
-              data-max-len="{{ title_max_len }}">Rename</button>
-      <form method="post" action="/documents/{{ doc.id }}/retry-parse"
-            class="library-action-form"
-            onsubmit="return confirm('Re-chunk &quot;{{ doc.title }}&quot;? Your reading position is preserved.');">
-        <button type="submit" class="library-rechunk">Re-chunk</button>
-      </form>
-      {% elif doc.status == 'failed' %}
-      <form method="post" action="/documents/{{ doc.id }}/retry-parse" class="library-action-form">
-        <button type="submit" class="library-retry">Retry</button>
-      </form>
-      {% endif %}
-      <form method="post" action="/documents/{{ doc.id }}/delete"
-            class="library-action-form"
-            onsubmit="return confirm('Delete &quot;{{ doc.title }}&quot;? This cannot be undone.');">
-        <button type="submit" class="library-delete">Delete</button>
-      </form>
-    </div>
-  </details>
 </article>
