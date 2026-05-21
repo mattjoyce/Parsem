@@ -142,7 +142,7 @@ def test_library_renders_a_rename_button_per_row(
 ) -> None:
     client, conn = empty_app
     doc_id = _seed(conn, title="alpha")
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert f'data-doc-id="{doc_id}"' in body
     assert "library-rename" in body
 
@@ -154,7 +154,7 @@ def test_library_template_uses_tile_partial(
     so the rename response and the page render the same markup. ADR 0005."""
     client, conn = empty_app
     doc_id = _seed(conn, title="alpha")
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert f'id="library-tile-{doc_id}"' in body
     assert "library-tile" in body
 

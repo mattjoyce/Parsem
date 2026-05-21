@@ -19,7 +19,7 @@ def test_prefs_js_is_served(client: TestClient) -> None:
 
 
 def test_library_page_carries_bootstrap_and_panel(client: TestClient) -> None:
-    html = client.get("/library").text
+    html = client.get("/library?segment=all").text
     # No-FOUC bootstrap: reads the localStorage key, sets the html attrs.
     assert "parsem_prefs" in html
     assert "data-theme" in html

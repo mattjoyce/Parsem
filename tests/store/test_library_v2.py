@@ -203,7 +203,7 @@ def md_doc(db: sqlite3.Connection) -> int:
 def test_row_includes_ingest_date_and_source_domain_for_file(
     db: sqlite3.Connection, md_doc: int
 ) -> None:
-    [row] = list_library_rows(db)
+    [row] = list_library_rows(db, segment="all")
     assert row.ingest_date == T0
     assert row.source_domain is None
     assert row.document.source_type == "markdown"
@@ -214,21 +214,21 @@ def test_row_for_url_doc_carries_domain(db: sqlite3.Connection) -> None:
         db, title="post", original_path="https://stratechery.com/post",
         status="ready", total_chunks=3, source_type="url", now=T0,
     )
-    [row] = list_library_rows(db)
+    [row] = list_library_rows(db, segment="all")
     assert row.source_domain == "stratechery.com"
 
 
 def test_row_total_reading_seconds_sums_chunk_estimates(
     db: sqlite3.Connection, md_doc: int
 ) -> None:
-    [row] = list_library_rows(db)
+    [row] = list_library_rows(db, segment="all")
     assert row.total_reading_seconds == pytest.approx(10.0)  # 5 x 2.0
 
 
 def test_row_pin_count_starts_at_zero(
     db: sqlite3.Connection, md_doc: int
 ) -> None:
-    [row] = list_library_rows(db)
+    [row] = list_library_rows(db, segment="all")
     assert row.pin_count == 0
 
 
@@ -247,7 +247,7 @@ def test_row_pin_count_reflects_pins(
         (md_doc, chunk_id, chunk_id, T0.isoformat()),
     )
     db.commit()
-    [row] = list_library_rows(db)
+    [row] = list_library_rows(db, segment="all")
     assert row.pin_count == 1
 
 
@@ -256,14 +256,14 @@ def test_row_tags_alphabetised(
 ) -> None:
     add_tag(db, md_doc, "wisdom", now=T0)
     add_tag(db, md_doc, "brick", now=T0)
-    [row] = list_library_rows(db)
+    [row] = list_library_rows(db, segment="all")
     assert row.tags == ["brick", "wisdom"]
 
 
 def test_row_last_opened_is_none_when_never_read(
     db: sqlite3.Connection, md_doc: int
 ) -> None:
-    [row] = list_library_rows(db)
+    [row] = list_library_rows(db, segment="all")
     assert row.last_opened is None
 
 
@@ -277,14 +277,14 @@ def test_row_last_opened_reflects_reading_state(
         (md_doc, opened_at.isoformat()),
     )
     db.commit()
-    [row] = list_library_rows(db)
+    [row] = list_library_rows(db, segment="all")
     assert row.last_opened == opened_at
 
 
 def test_row_silhouette_buckets_is_25_for_any_doc(
     db: sqlite3.Connection, md_doc: int
 ) -> None:
-    [row] = list_library_rows(db)
+    [row] = list_library_rows(db, segment="all")
     assert len(row.silhouette_buckets) == SILHOUETTE_BUCKET_COUNT
 
 
@@ -299,7 +299,7 @@ def test_row_silhouette_partitions_at_high_water_position(
         (md_doc, T0.isoformat()),
     )
     db.commit()
-    [row] = list_library_rows(db)
+    [row] = list_library_rows(db, segment="all")
     assert row.silhouette_buckets[0].kind == "read_unrated"
     assert row.silhouette_buckets[5].kind == "read_unrated"
     assert row.silhouette_buckets[10].kind == "read_unrated"
@@ -359,5 +359,5 @@ def test_section_layout_returns_empty_for_unparsed_doc(
         db, title="raw", original_path="r.md", status="processing",
         total_chunks=None, now=T0,
     )
-    [row] = list_library_rows(db)
+    [row] = list_library_rows(db, segment="all")
     assert row.section_layout == []

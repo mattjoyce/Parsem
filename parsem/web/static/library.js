@@ -4,6 +4,54 @@
 (function () {
   "use strict";
 
+  // === Control strip — segment + sort state persistence ==============
+  //
+  // ADR 0005, bd Parsem-7wu.4. URL query params are authoritative.
+  // On a bare /library hit (no params), redirect to the last-used
+  // state from localStorage if one exists. On any visit WITH params,
+  // save them for the next bare hit. Saved key:
+  //   parsem_library_state = {segment: '...', sort: '...'}
+  //
+  // The redirect runs synchronously before any DOM work so the page
+  // bounces straight to the saved view without the user briefly
+  // seeing the default.
+  const LIBRARY_STATE_KEY = "parsem_library_state";
+  (function syncLibraryState() {
+    const params = new URLSearchParams(window.location.search);
+    const hasUrlState = params.has("segment") || params.has("sort");
+    if (!hasUrlState) {
+      try {
+        const saved = JSON.parse(
+          localStorage.getItem(LIBRARY_STATE_KEY) || "null",
+        );
+        if (saved && (saved.segment || saved.sort)) {
+          const q = new URLSearchParams();
+          if (saved.segment) q.set("segment", saved.segment);
+          if (saved.sort) q.set("sort", saved.sort);
+          window.location.replace(`/library?${q.toString()}`);
+        }
+      } catch (_) { /* localStorage blocked — fall through */ }
+      return;
+    }
+    try {
+      const state = {};
+      if (params.has("segment")) state.segment = params.get("segment");
+      if (params.has("sort")) state.sort = params.get("sort");
+      localStorage.setItem(LIBRARY_STATE_KEY, JSON.stringify(state));
+    } catch (_) { /* localStorage blocked — silent */ }
+  })();
+
+  // Sort dropdown change → navigate, preserving the current segment.
+  const sortSelect = document.querySelector(".library-sort__select");
+  if (sortSelect) {
+    sortSelect.addEventListener("change", (ev) => {
+      const current = new URLSearchParams(window.location.search);
+      current.set("sort", ev.target.value);
+      if (!current.has("segment")) current.set("segment", "in_progress");
+      window.location.assign(`/library?${current.toString()}`);
+    });
+  }
+
   // === Drawer open / close ============================================
   //
   // Each doc has its own pre-rendered drawer hidden in the DOM

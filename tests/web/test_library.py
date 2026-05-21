@@ -65,7 +65,7 @@ def test_get_library_returns_html_page(
     empty_app: tuple[TestClient, sqlite3.Connection],
 ) -> None:
     client, _ = empty_app
-    response = client.get("/library")
+    response = client.get("/library?segment=all")
     assert response.status_code == 200
     assert "<html" in response.text
 
@@ -74,7 +74,7 @@ def test_empty_library_renders_empty_state(
     empty_app: tuple[TestClient, sqlite3.Connection],
 ) -> None:
     client, _ = empty_app
-    response = client.get("/library")
+    response = client.get("/library?segment=all")
     assert response.status_code == 200
     assert "library-empty" in response.text
 
@@ -86,7 +86,7 @@ def test_library_lists_every_document(
     _insert(conn, title="alpha", status="ready", created_at=T0)
     _insert(conn, title="beta", status="processing", created_at=T0 + timedelta(seconds=1))
     _insert(conn, title="gamma", status="failed", created_at=T0 + timedelta(seconds=2))
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "alpha" in body
     assert "beta" in body
     assert "gamma" in body
@@ -105,7 +105,7 @@ def test_library_renders_status_per_row(
         conn, title="failed-doc", status="failed",
         created_at=T0 + timedelta(seconds=1),
     )
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     # Failed status renders as a labelled badge in the tile.
     assert "library-status-failed" in body
     # Ready tile has the failure modifier absent and shows no status div.
@@ -119,7 +119,7 @@ def test_library_title_links_to_reader(
 ) -> None:
     client, conn = empty_app
     doc_id = _insert(conn, title="onlydoc", status="ready", created_at=T0)
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert f'href="/documents/{doc_id}/reader"' in body
 
 
@@ -144,7 +144,7 @@ def test_library_orders_by_last_opened_desc_with_created_at_fallback(
     recent = _insert(conn, title="recently-opened", status="ready", created_at=T0)
     _set_last_opened(conn, recent, T0 + timedelta(hours=1))
 
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     # Slice on the document-id-bearing href which is unique per doc.
     pos_oldest = body.index(f"/documents/{oldest}/reader")
     pos_middle = body.index(f"/documents/{middle}/reader")
@@ -160,7 +160,7 @@ def test_library_ties_break_alphabetically_by_title(
     a = _insert(conn, title="apple", status="ready", created_at=T0)
     b = _insert(conn, title="banana", status="ready", created_at=T0)
     c = _insert(conn, title="cherry", status="ready", created_at=T0)
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     pos_a = body.index(f"/documents/{a}/reader")
     pos_b = body.index(f"/documents/{b}/reader")
     pos_c = body.index(f"/documents/{c}/reader")
@@ -198,7 +198,7 @@ def test_library_renders_progress_percent_for_never_opened_doc(
     doc_id = _insert(conn, title="never-opened", status="ready", created_at=T0)
     conn.execute("UPDATE documents SET total_chunks=10 WHERE id=?", (doc_id,))
     conn.commit()
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "0%" in body
 
 
@@ -209,7 +209,7 @@ def test_library_progress_at_position_zero_with_ten_chunks_is_ten_percent(
     client, conn = empty_app
     doc_id = _insert(conn, title="open-zero", status="ready", created_at=T0)
     _set_position(conn, doc_id, current=0, total=10)
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "10%" in body
 
 
@@ -219,7 +219,7 @@ def test_library_progress_at_last_chunk_is_one_hundred_percent(
     client, conn = empty_app
     doc_id = _insert(conn, title="finished", status="ready", created_at=T0)
     _set_position(conn, doc_id, current=9, total=10)
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "100%" in body
 
 
@@ -231,7 +231,7 @@ def test_library_progress_clamps_to_one_hundred_when_position_overflows(
     client, conn = empty_app
     doc_id = _insert(conn, title="overshoot", status="ready", created_at=T0)
     _set_position(conn, doc_id, current=15, total=10)
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "100%" in body
     assert "160%" not in body
 
@@ -245,7 +245,7 @@ def test_library_progress_omitted_for_failed_doc_with_no_total_chunks(
     The tile must still render without crashing."""
     client, conn = empty_app
     doc_id = _insert(conn, title="failed-doc", status="failed", created_at=T0)
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert f"library-tile-{doc_id}" in body
     assert "library-tile__percent" not in body
     assert "library-tile--failed" in body
@@ -311,7 +311,7 @@ def test_library_silhouette_always_renders_25_cells(
     _seed_doc_with_chunks_and_ratings(
         conn, title="any", chunk_count=5, ratings={}
     )
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert body.count('class="library-tile__cell ') == 25
 
 
@@ -328,7 +328,7 @@ def test_library_silhouette_tints_read_and_rated_cell(
         conn, title="all-rated", chunk_count=3, ratings={0: 4, 1: 4, 2: 4},
         high_water=3,
     )
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "library-tile__cell--rated-4" in body
 
 
@@ -344,7 +344,7 @@ def test_library_silhouette_unread_for_rated_but_unread_chunks(
         conn, title="rated-unread", chunk_count=3, ratings={0: 5},
         high_water=0,  # never opened
     )
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "library-tile__cell--unread" in body
     assert "library-tile__cell--rated-5" not in body
 
@@ -359,7 +359,7 @@ def test_library_silhouette_omits_rating_modifier_for_read_unrated_buckets(
         conn, title="read-unrated", chunk_count=3, ratings={},
         high_water=3,  # fully read, no ratings
     )
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "library-tile__cell--read_unrated" in body
     for r in range(1, 6):
         assert f"library-tile__cell--rated-{r}" not in body
@@ -373,7 +373,7 @@ def test_library_silhouette_renders_for_doc_with_no_chunks(
     to bucket. The tile reads as a quiet empty mark."""
     client, conn = empty_app
     _insert(conn, title="failed-doc", status="failed", created_at=T0)
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert 'class="library-tile__silhouette"' in body
     assert body.count('class="library-tile__cell ') == 25
 

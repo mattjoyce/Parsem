@@ -491,18 +491,69 @@ def _document_from_row(row: sqlite3.Row) -> Document:
     )
 
 
-def list_library_rows(conn: sqlite3.Connection) -> list[LibraryRow]:
-    """All documents with the full library v2 payload (ADR 0005, bd
-    Parsem-7wu), ordered by last-opened DESC (reading_state.updated_at),
-    falling back to created_at for never-opened docs, with a stable
-    secondary sort by title. Spec §9.1; Parsem-3z8 + Parsem-5oi +
-    claude-yda; library-v2 extension Parsem-7wu.1.
+# Control-strip segment vocabulary (ADR 0005, Parsem-7wu.4). Exclusive —
+# one selected at a time. Failed/processing docs (total_chunks NULL)
+# count as 'unread' (high_water defaults to 0); the in_progress and
+# finished computations rely on division and NULLIF returns NULL so
+# those rows fall out cleanly. The 0.95 cutoff matches the lenient
+# 'Finished' rule from the ADR (covers footnotes/appendix).
+_SEGMENT_WHERE: dict[str, str] = {
+    "all": "",
+    "unread": "WHERE COALESCE(rs.high_water_position, 0) = 0",
+    "in_progress": (
+        "WHERE COALESCE(rs.high_water_position, 0) > 0"
+        " AND (COALESCE(rs.high_water_position, 0) * 1.0"
+        "      / NULLIF(d.total_chunks, 0)) < 0.95"
+    ),
+    "finished": (
+        "WHERE (COALESCE(rs.high_water_position, 0) * 1.0"
+        "       / NULLIF(d.total_chunks, 0)) >= 0.95"
+    ),
+}
 
-    One LEFT JOIN against reading_state covers ordering + progress +
-    high-water + last-opened. Two correlated subqueries inline
-    `pin_count` and `total_reading_seconds` so the per-doc loop only
-    needs ratings, section layout, and the bulk tag load.
+# Sort vocabulary — `last_opened` is the spec-default; the rest cover
+# the common 'how do I find this thing' axes. Every sort gets a
+# stable `title ASC` tiebreaker so order is deterministic across
+# re-renders (matters for tests + smooth UAT).
+_SORT_ORDER: dict[str, str] = {
+    "last_opened": (
+        "ORDER BY COALESCE(rs.updated_at, d.created_at) DESC, d.title ASC"
+    ),
+    "recently_added": "ORDER BY d.created_at DESC, d.title ASC",
+    "title_az": "ORDER BY d.title ASC",
+    "longest": "ORDER BY d.total_chunks DESC NULLS LAST, d.title ASC",
+}
+
+VALID_SEGMENTS: frozenset[str] = frozenset(_SEGMENT_WHERE)
+VALID_SORTS: frozenset[str] = frozenset(_SORT_ORDER)
+DEFAULT_SEGMENT = "in_progress"
+DEFAULT_SORT = "last_opened"
+
+
+def list_library_rows(
+    conn: sqlite3.Connection,
+    *,
+    segment: str = DEFAULT_SEGMENT,
+    sort: str = DEFAULT_SORT,
+) -> list[LibraryRow]:
+    """All documents matching the selected segment + sort, with the
+    full library v2 payload (ADR 0005, bd Parsem-7wu).
+
+    `segment` ∈ VALID_SEGMENTS filters by reading-state bucket.
+    `sort` ∈ VALID_SORTS picks the order. Unknown values fall back
+    to the defaults silently — the route is expected to validate
+    + normalise before calling.
+
+    One LEFT JOIN against reading_state covers progress + high-water
+    + last-opened. Two correlated subqueries inline `pin_count` and
+    `total_reading_seconds` so the per-doc loop only needs ratings,
+    section layout, and the bulk tag load.
+
+    Spec §9.1; Parsem-3z8 + Parsem-5oi + claude-yda; library-v2
+    extension Parsem-7wu.{1,4}.
     """
+    where_clause = _SEGMENT_WHERE.get(segment, _SEGMENT_WHERE[DEFAULT_SEGMENT])
+    order_clause = _SORT_ORDER.get(sort, _SORT_ORDER[DEFAULT_SORT])
     rows = conn.execute(
         "SELECT d.id, d.title, d.source_type, d.original_path, d.status,"
         " d.failure_reason, d.total_chunks, d.preference_overrides_json,"
@@ -516,7 +567,8 @@ def list_library_rows(conn: sqlite3.Connection) -> list[LibraryRow]:
         "   AS total_reading_seconds"
         " FROM documents d"
         " LEFT JOIN reading_state rs ON rs.document_id = d.id"
-        " ORDER BY COALESCE(rs.updated_at, d.created_at) DESC, d.title ASC"
+        f" {where_clause}"
+        f" {order_clause}"
     ).fetchall()
 
     doc_ids = [row["id"] for row in rows]

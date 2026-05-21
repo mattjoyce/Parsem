@@ -98,7 +98,7 @@ def test_post_ingest_file_self_ingests_and_creates_document(
     raw_dir = originals.parent / "inbound" / "raw"
     assert not (raw_dir / "hello.md").exists()
     # And it shows up in the library listing.
-    assert "hello" in client.get("/library").text
+    assert "hello" in client.get("/library?segment=all").text
 
 
 def test_post_ingest_file_with_bad_markdown_creates_failed_row(

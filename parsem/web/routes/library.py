@@ -24,6 +24,10 @@ from pydantic import BaseModel
 
 from parsem.ingest import layout
 from parsem.store.documents import (
+    DEFAULT_SEGMENT,
+    DEFAULT_SORT,
+    VALID_SEGMENTS,
+    VALID_SORTS,
     LibraryRow,
     compute_drawer_sections,
     compute_silhouette_buckets,
@@ -51,8 +55,25 @@ router = APIRouter()
 
 
 @router.get("/library", response_class=HTMLResponse)
-def get_library(request: Request) -> HTMLResponse:
-    rows = list_library_rows(request.app.state.db)
+def get_library(
+    request: Request,
+    segment: str = DEFAULT_SEGMENT,
+    sort: str = DEFAULT_SORT,
+) -> HTMLResponse:
+    """Library v2 (ADR 0005, bd Parsem-7wu.4). Query params drive the
+    control strip: `segment` ∈ {all, unread, in_progress, finished}
+    picks the reading-state filter; `sort` ∈ {last_opened,
+    recently_added, title_az, longest} picks the order.
+
+    Unknown values fall back to the defaults silently — keeps the
+    page robust against bookmarked URLs from a future schema and
+    against bad localStorage carry-over.
+    """
+    if segment not in VALID_SEGMENTS:
+        segment = DEFAULT_SEGMENT
+    if sort not in VALID_SORTS:
+        sort = DEFAULT_SORT
+    rows = list_library_rows(request.app.state.db, segment=segment, sort=sort)
     templates = request.app.state.templates
     return templates.TemplateResponse(
         request,
@@ -63,6 +84,8 @@ def get_library(request: Request) -> HTMLResponse:
             # Library shares the reader's appearance bootstrap + "Aa"
             # panel (claude-rdk, spec §15.3).
             "presentation": request.app.state.presentation,
+            "current_segment": segment,
+            "current_sort": sort,
         },
     )
 

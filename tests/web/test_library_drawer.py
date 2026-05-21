@@ -61,7 +61,7 @@ def test_drawer_rendered_per_doc(
     client, conn = empty_app
     d1 = _seed_md(conn, title="alpha")
     d2 = _seed_md(conn, title="beta")
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert f'id="library-drawer-{d1}"' in body
     assert f'id="library-drawer-{d2}"' in body
 
@@ -72,7 +72,7 @@ def test_drawer_hidden_by_default(
     """Drawers ship with [hidden] — the JS layer drops it on tile click."""
     client, conn = empty_app
     _seed_md(conn, title="alpha")
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     # The drawer aside tag carries `hidden` as a boolean attribute.
     assert '<aside id="library-drawer-' in body
     drawer_open = body.index('<aside id="library-drawer-')
@@ -87,7 +87,7 @@ def test_overlay_element_present_and_hidden(
     """One shared backdrop overlay, hidden until a drawer opens."""
     client, conn = empty_app
     _seed_md(conn, title="x")
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert 'class="library-drawer-overlay"' in body
     # The first overlay tag should carry `hidden`.
     open_idx = body.index('class="library-drawer-overlay"')
@@ -103,7 +103,7 @@ def test_drawer_carries_full_title_and_open_button(
 ) -> None:
     client, conn = empty_app
     doc_id = _seed_md(conn, title="my-doc")
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     # Drawer title contains the full text inside .library-drawer__title-text.
     assert 'class="library-drawer__title-text">my-doc<' in body
     # Open button is an <a> to /documents/{id}/reader inside the drawer.
@@ -119,7 +119,7 @@ def test_tile_does_not_link_directly_to_reader(
     the reader. ADR 0005."""
     client, conn = empty_app
     doc_id = _seed_md(conn, title="alpha")
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     # No anchor wrapping the tile title. The tile is an article with
     # role=button; the title is just a span.
     assert 'class="library-tile__title-text">alpha<' in body
@@ -133,7 +133,7 @@ def test_drawer_actions_present_for_ready_doc(
 ) -> None:
     client, conn = empty_app
     _seed_md(conn, title="alpha", chunks=3)
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     drawer_start = body.index('<aside id="library-drawer-')
     drawer_end = body.index("</aside>", drawer_start)
     drawer = body[drawer_start:drawer_end]
@@ -151,7 +151,7 @@ def test_drawer_carries_retry_button_for_failed_doc(
         conn, title="boom", original_path="data/originals/boom.md",
         status="failed", failure_reason="some reason", now=T0,
     )
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     drawer_start = body.index('<aside id="library-drawer-')
     drawer_end = body.index("</aside>", drawer_start)
     drawer = body[drawer_start:drawer_end]
@@ -185,7 +185,7 @@ def test_drawer_renders_section_aware_heatmap_for_ready_doc(
     )
     conn.commit()
 
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     drawer_start = body.index('<aside id="library-drawer-')
     drawer_end = body.index("</aside>", drawer_start)
     drawer = body[drawer_start:drawer_end]
@@ -227,7 +227,7 @@ def test_drawer_heatmap_uses_full_rating_palette_for_rated_cells(
     )
     conn.commit()
 
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     drawer_start = body.index('<aside id="library-drawer-')
     drawer_end = body.index("</aside>", drawer_start)
     drawer = body[drawer_start:drawer_end]
@@ -244,7 +244,7 @@ def test_drawer_source_url_present_only_for_url_doc(
         conn, title="post", original_path="https://stratechery.com/post",
         status="ready", total_chunks=3, source_type="url", now=T0,
     )
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "library-drawer__source-url" in body
     assert 'href="https://stratechery.com/post"' in body
 
@@ -254,7 +254,7 @@ def test_drawer_source_url_absent_for_file_doc(
 ) -> None:
     client, conn = empty_app
     _seed_md(conn, title="md-doc")
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "library-drawer__source-url" not in body
 
 
@@ -265,7 +265,7 @@ def test_drawer_renders_tags_when_present(
     doc_id = _seed_md(conn, title="alpha")
     add_tag(conn, doc_id, "wisdom", now=T0)
     add_tag(conn, doc_id, "brick", now=T0)
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "library-drawer__chip" in body
     assert ">brick<" in body
     assert ">wisdom<" in body
@@ -276,7 +276,7 @@ def test_drawer_omits_tags_block_when_no_tags(
 ) -> None:
     client, conn = empty_app
     _seed_md(conn, title="alpha")
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "library-drawer__chip" not in body
 
 
@@ -293,7 +293,7 @@ def test_drawer_stats_show_chunk_position_when_read(
         (doc_id, T0.isoformat()),
     )
     conn.commit()
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "chunk 5 of 10" in body  # current_position + 1
 
 
@@ -302,6 +302,6 @@ def test_drawer_stats_pin_count_always_present(
 ) -> None:
     client, conn = empty_app
     _seed_md(conn, title="alpha", chunks=3)
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     # Pins row is part of the stats dl.
     assert "<dt>Pins</dt><dd>0</dd>" in body

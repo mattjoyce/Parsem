@@ -208,6 +208,6 @@ def test_library_renders_a_delete_button_per_row(
 ) -> None:
     client, conn, _ = app_ctx
     doc_id = _seed_doc(conn, title="trash-me")
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert f'action="/documents/{doc_id}/delete"' in body
     assert "library-delete" in body

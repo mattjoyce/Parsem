@@ -32,6 +32,34 @@
     </form>
   </section>
 
+  {# Control strip — segments + sort (ADR 0005, bd Parsem-7wu.4).
+     Segments are exclusive; default = in_progress. Sort is independent
+     of the segment; default = last_opened. State persists via URL
+     query params (authoritative) + localStorage fallback. The tag-
+     chip row lands in Parsem-7wu.5 alongside tag CRUD endpoints. #}
+  <nav class="library-strip" aria-label="Library filters">
+    <ul class="library-segments" role="tablist">
+      {% for slug, label in [('all', 'All'), ('unread', 'Unread'), ('in_progress', 'In progress'), ('finished', 'Finished')] %}
+      <li role="presentation">
+        <a class="library-segment{% if slug == current_segment %} library-segment--active{% endif %}"
+           href="/library?segment={{ slug }}&sort={{ current_sort }}"
+           role="tab"
+           aria-selected="{{ 'true' if slug == current_segment else 'false' }}"
+           data-segment="{{ slug }}">{{ label }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+    <label class="library-sort">
+      <span class="library-sort__label">Sort</span>
+      <select class="library-sort__select" data-current-sort="{{ current_sort }}">
+        <option value="last_opened"{% if current_sort == 'last_opened' %} selected{% endif %}>Last opened</option>
+        <option value="recently_added"{% if current_sort == 'recently_added' %} selected{% endif %}>Recently added</option>
+        <option value="title_az"{% if current_sort == 'title_az' %} selected{% endif %}>Title A–Z</option>
+        <option value="longest"{% if current_sort == 'longest' %} selected{% endif %}>Longest</option>
+      </select>
+    </label>
+  </nav>
+
   {% if rows %}
   {# 3 columns desktop / 2 narrow / 1 mobile via CSS Grid auto-fill.
      Each tile owns its layout — see _library_tile.html. The
@@ -42,6 +70,11 @@
       {% include "_library_tile.html" %}
     {% endfor %}
   </section>
+  {% elif current_segment != 'all' %}
+  <p class="library-empty">
+    No documents in this view —
+    <a href="/library?segment=all&sort={{ current_sort }}">show all</a>.
+  </p>
   {% else %}
   <p class="library-empty">
     No documents yet — drop a .md file or paste a URL above to begin.

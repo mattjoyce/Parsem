@@ -166,7 +166,7 @@ def test_failed_row_renders_retry_button_and_reason(
 ) -> None:
     client, conn, originals = app_ctx
     doc_id = _seed_failed(conn, originals)
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert f'action="/documents/{doc_id}/retry-parse"' in body
     assert "library-retry" in body
     assert "library-failure-reason" in body
@@ -180,7 +180,7 @@ def test_failed_row_does_not_render_rename_button(
     branch shows Retry instead."""
     client, conn, originals = app_ctx
     doc_id = _seed_failed(conn, originals)
-    row_html = _row_html(client.get("/library").text, doc_id)
+    row_html = _row_html(client.get("/library?segment=all").text, doc_id)
     assert "library-rename" not in row_html
     assert "library-rechunk" not in row_html
     assert "library-retry" in row_html
@@ -197,7 +197,7 @@ def test_ready_row_does_not_render_retry_button(
         status="ready",
         now=T0,
     )
-    body = client.get("/library").text
+    body = client.get("/library?segment=all").text
     assert "library-retry" not in body
 
 
@@ -212,7 +212,7 @@ def test_ready_row_renders_rechunk_button(
     doc_id = _seed_ready_with_state(
         conn, originals, body="# T\n\nA paragraph.\n", current=0, high_water=0
     )
-    row_html = _row_html(client.get("/library").text, doc_id)
+    row_html = _row_html(client.get("/library?segment=all").text, doc_id)
     assert "library-rechunk" in row_html
     assert f'action="/documents/{doc_id}/retry-parse"' in row_html
 
