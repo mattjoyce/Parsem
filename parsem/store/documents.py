@@ -14,13 +14,20 @@ Reads use a LEFT JOIN to recover heading_chunk_position from the FK.
 from __future__ import annotations
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Literal
+from urllib.parse import urlparse
 
 from parsem.domain.atomic import AtomicPiece
 from parsem.domain.materialize import Chunk, Section
 from parsem.store.atomic_pieces import insert_atomic_pieces
 from parsem.store.chunking_runs import ChunkingRun, insert_chunking_run
+from parsem.store.tags import load_tags_for_documents
+
+SILHOUETTE_BUCKET_COUNT = 25
+
+BucketKind = Literal["absent", "unread", "read_unrated", "rated"]
 
 
 @dataclass(frozen=True)
@@ -246,19 +253,147 @@ def load_document(conn: sqlite3.Connection, document_id: int) -> Document | None
 
 
 @dataclass(frozen=True)
-class LibraryRow:
-    """A document plus the small bits of derived display state the
-    library row needs. Parsem-5oi adds `progress_percent`; claude-yda
-    adds `chunk_ratings` for the heatmap strip per spec §9.1.
+class BucketState:
+    """One of the 25 cells in the library-tile silhouette (ADR 0005).
 
-    `chunk_ratings` is a dense list indexed by chunk position; entry
-    i is the latest rating (1..5) on chunk i, or None for unrated.
-    Length == document.total_chunks (or 0 when total_chunks is
-    unknown / the doc never parsed)."""
+    `kind`:
+      - 'absent' — bucket covers no chunks (only happens when the doc
+        has fewer than 25 chunks; the cell renders invisible).
+      - 'unread' — all assigned chunks are past the high-water mark.
+      - 'read_unrated' — bucket has settled chunks but no ratings.
+      - 'rated' — bucket has at least one rated chunk; `mean_rating`
+        is the mean of the rated chunks in the bucket, rounded to
+        the integer rating palette {1..5}.
+
+    `mean_rating` is non-None iff `kind == 'rated'`. The drawer's
+    full-resolution heatmap uses the same value space at chunk level.
+    """
+
+    kind: BucketKind
+    mean_rating: int | None = None
+
+
+def compute_silhouette_buckets(
+    chunk_ratings: list[int | None],
+    high_water_position: int,
+) -> list[BucketState]:
+    """Down-sample a doc's chunk-level state into the 25-cell tile
+    silhouette. Pure function — no DB access.
+
+    Each chunk `j` maps to bucket `⌊j·25/N⌋` where N is the total
+    chunk count. The same formula works for N>=25 (many chunks per
+    bucket) and N<25 (sparse buckets, some 'absent'). For N==0 the
+    silhouette is 25 'unread' buckets — covers converting / failed /
+    never-parsed docs.
+
+    `chunk_ratings` is the dense rating list from
+    `load_chunk_ratings_dense`: length == N, entry i is the latest
+    rating on chunk i or None. `high_water_position` partitions the
+    sequence: chunk j is settled iff j < high_water_position.
+
+    See ADR 0005 §"Tile anatomy" and §"5x5 silhouette" for the
+    semantic role of the resulting marks. The data layer commits to
+    delivering 25 buckets; the template renders them as a 5x5 grid.
+    """
+    total_chunks = len(chunk_ratings)
+    if total_chunks == 0:
+        return [BucketState("unread") for _ in range(SILHOUETTE_BUCKET_COUNT)]
+
+    # Bucket assignment per chunk. Same formula for any N — sparse for
+    # small docs, dense for large ones.
+    bucket_chunks: list[list[int]] = [
+        [] for _ in range(SILHOUETTE_BUCKET_COUNT)
+    ]
+    for chunk_pos in range(total_chunks):
+        bucket_idx = chunk_pos * SILHOUETTE_BUCKET_COUNT // total_chunks
+        # Safety clamp — exact arithmetic should always land in range
+        # but a defensive min() protects against any drift.
+        bucket_idx = min(bucket_idx, SILHOUETTE_BUCKET_COUNT - 1)
+        bucket_chunks[bucket_idx].append(chunk_pos)
+
+    result: list[BucketState] = []
+    for chunk_positions in bucket_chunks:
+        if not chunk_positions:
+            result.append(BucketState("absent"))
+            continue
+
+        ratings_in_bucket: list[int] = [
+            r for pos in chunk_positions
+            if (r := chunk_ratings[pos]) is not None
+        ]
+        any_settled = any(pos < high_water_position for pos in chunk_positions)
+
+        if not any_settled:
+            result.append(BucketState("unread"))
+        elif not ratings_in_bucket:
+            result.append(BucketState("read_unrated"))
+        else:
+            mean = sum(ratings_in_bucket) / len(ratings_in_bucket)
+            rounded = max(1, min(5, round(mean)))
+            result.append(BucketState("rated", mean_rating=rounded))
+
+    return result
+
+
+def derive_source_domain(source_type: str, original_path: str) -> str | None:
+    """Pull the registrable host from a URL-ingested doc's stored URL.
+
+    Returns the netloc (host[:port]) for `source_type == 'url'` rows,
+    None otherwise. For URL docs, `documents.original_path` carries the
+    full URL (see parsem.ingest.url_submit). Malformed URLs yield None
+    rather than crashing — let the slug fall back to the URL badge.
+    """
+    if source_type != "url":
+        return None
+    try:
+        parsed = urlparse(original_path)
+    except (ValueError, AttributeError):
+        return None
+    host = (parsed.hostname or "").lower()
+    return host or None
+
+
+@dataclass(frozen=True)
+class LibraryRow:
+    """A document plus the derived display state the library v2 tile +
+    drawer needs (ADR 0005, bd Parsem-7wu).
+
+    Phase 1 fields (preserved for v1 templates during transition):
+      - `document`, `progress_percent`, `chunk_ratings`.
+
+    Phase 2 additions (library v2 — pure data, no template change
+    forced; the v1 row partial ignores these):
+      - `source_domain`: parsed hostname for URL docs, None for files.
+      - `ingest_date`: alias of `document.created_at`, surfaced
+        prominently so the slug template doesn't reach through the
+        document object.
+      - `last_opened`: `reading_state.updated_at` if the doc has ever
+        been opened, else None.
+      - `pin_count`: integer count from the pins table.
+      - `total_reading_seconds`: sum of `chunks.estimated_read_seconds`
+        for the doc's chunks. 0.0 when the doc has no chunks yet.
+      - `tags`: alphabetised list of manual tags (v2.0 has no
+        auto-tags).
+      - `section_layout`: list of `(section_title, chunk_count)` in
+        section order. Empty when the doc isn't `ready` yet. Drives
+        the drawer's full-resolution section-aware heatmap.
+      - `silhouette_buckets`: always 25 `BucketState`s for the tile
+        mark. Computed via `compute_silhouette_buckets`.
+
+    Existing v1 consumers (the rename route's _library_row.html
+    partial) read only the Phase 1 fields and stay green."""
 
     document: Document
     progress_percent: int
     chunk_ratings: list[int | None]
+    source_domain: str | None
+    ingest_date: datetime
+    last_opened: datetime | None
+    pin_count: int
+    total_reading_seconds: float
+    tags: list[str]
+    section_layout: list[tuple[str, int]] = field(default_factory=list)
+    silhouette_buckets: list[BucketState] = field(default_factory=list)
 
 
 def progress_percent(total_chunks: int | None, current_position: int | None) -> int:
@@ -290,36 +425,103 @@ def _document_from_row(row: sqlite3.Row) -> Document:
 
 
 def list_library_rows(conn: sqlite3.Connection) -> list[LibraryRow]:
-    """All documents with progress percent and chunk-rating heatmap
-    data, ordered by last-opened DESC (reading_state.updated_at),
+    """All documents with the full library v2 payload (ADR 0005, bd
+    Parsem-7wu), ordered by last-opened DESC (reading_state.updated_at),
     falling back to created_at for never-opened docs, with a stable
     secondary sort by title. Spec §9.1; Parsem-3z8 + Parsem-5oi +
-    claude-yda.
+    claude-yda; library-v2 extension Parsem-7wu.1.
 
-    Single LEFT JOIN against reading_state covers ordering AND
-    progress; a separate per-doc query collects ratings for the
-    heatmap strip.
+    One LEFT JOIN against reading_state covers ordering + progress +
+    high-water + last-opened. Two correlated subqueries inline
+    `pin_count` and `total_reading_seconds` so the per-doc loop only
+    needs ratings, section layout, and the bulk tag load.
     """
     rows = conn.execute(
         "SELECT d.id, d.title, d.source_type, d.original_path, d.status,"
         " d.failure_reason, d.total_chunks, d.preference_overrides_json,"
-        " d.created_at, d.updated_at, rs.current_position"
+        " d.created_at, d.updated_at,"
+        " rs.current_position, rs.high_water_position,"
+        " rs.updated_at AS last_opened_at,"
+        " (SELECT COUNT(*) FROM pins WHERE document_id = d.id)"
+        "   AS pin_count,"
+        " (SELECT COALESCE(SUM(estimated_read_seconds), 0)"
+        "    FROM chunks WHERE document_id = d.id)"
+        "   AS total_reading_seconds"
         " FROM documents d"
         " LEFT JOIN reading_state rs ON rs.document_id = d.id"
         " ORDER BY COALESCE(rs.updated_at, d.created_at) DESC, d.title ASC"
     ).fetchall()
+
+    doc_ids = [row["id"] for row in rows]
+    tags_by_doc = load_tags_for_documents(conn, doc_ids)
+
     result: list[LibraryRow] = []
     for row in rows:
         doc = _document_from_row(row)
         ratings = load_chunk_ratings_dense(conn, doc.id, doc.total_chunks)
+        high_water = row["high_water_position"] or 0
+        last_opened_raw = row["last_opened_at"]
+        last_opened = (
+            datetime.fromisoformat(last_opened_raw)
+            if last_opened_raw is not None
+            else None
+        )
+        section_layout = (
+            load_section_layout(conn, doc.id)
+            if doc.status == "ready" and (doc.total_chunks or 0) > 0
+            else []
+        )
+        silhouette = compute_silhouette_buckets(ratings, high_water)
+
         result.append(LibraryRow(
             document=doc,
             progress_percent=progress_percent(
                 row["total_chunks"], row["current_position"]
             ),
             chunk_ratings=ratings,
+            source_domain=derive_source_domain(
+                doc.source_type, doc.original_path
+            ),
+            ingest_date=doc.created_at,
+            last_opened=last_opened,
+            pin_count=row["pin_count"],
+            total_reading_seconds=float(row["total_reading_seconds"]),
+            tags=tags_by_doc.get(doc.id, []),
+            section_layout=section_layout,
+            silhouette_buckets=silhouette,
         ))
     return result
+
+
+def load_section_layout(
+    conn: sqlite3.Connection, document_id: int
+) -> list[tuple[str, int]]:
+    """Return the doc's sections as `(heading_text, chunk_count)` pairs
+    in section order, for the library v2 drawer's full-resolution
+    section-aware heatmap.
+
+    Heading text is derived from the heading chunk's first line with
+    leading `#` markers stripped — close enough for a section label and
+    avoids storing a denormalised field. A section without a resolvable
+    heading chunk (legacy / weird state) renders with an empty title;
+    the drawer template falls back to "§" in that case.
+    """
+    rows = conn.execute(
+        "SELECT s.start_chunk_position, s.end_chunk_position,"
+        " c.text AS heading_text"
+        " FROM sections s"
+        " LEFT JOIN chunks c ON c.id = s.heading_chunk_id"
+        " WHERE s.document_id = ?"
+        " ORDER BY s.start_chunk_position",
+        (document_id,),
+    ).fetchall()
+    layout: list[tuple[str, int]] = []
+    for row in rows:
+        chunk_count = row["end_chunk_position"] - row["start_chunk_position"] + 1
+        heading_text = row["heading_text"] or ""
+        first_line = heading_text.split("\n", 1)[0].lstrip("#").strip()
+        layout.append((first_line, chunk_count))
+    return layout
 
 
 def load_chunk_ratings_dense(

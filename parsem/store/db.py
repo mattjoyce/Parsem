@@ -265,8 +265,25 @@ ALTER TABLE documents ADD COLUMN source_hash TEXT;
 CREATE INDEX idx_documents_source_hash ON documents(source_hash);
 """
 
+# v5 — manual tagging for library v2 (ADR 0005, bd Parsem-7wu). Flat
+# namespace, lowercased + hyphenated on input normalisation (caller side
+# in parsem.store.tags). Composite PK enforces "one tag value per doc";
+# cascade on documents wipes a doc's tags with the doc. The secondary
+# index on `tag` powers the "all distinct tags in the library" query
+# behind the chip row.
+SCHEMA_V5 = """
+CREATE TABLE document_tags (
+    document_id INTEGER NOT NULL,
+    tag TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (document_id, tag),
+    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_document_tags_tag ON document_tags(tag);
+"""
+
 # Forward-only migration list. Index = (version - 1). Append, never edit.
-MIGRATIONS: list[str] = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4]
+MIGRATIONS: list[str] = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5]
 
 
 def connect(path: str | Path = ":memory:") -> sqlite3.Connection:
