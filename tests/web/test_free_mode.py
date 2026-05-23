@@ -49,11 +49,17 @@ def test_free_mode_marker_attribute_flips(client: TestClient) -> None:
     assert 'data-free-mode="false"' in response_on.text
 
 
-def test_free_badge_renders_only_when_on(client: TestClient) -> None:
+def test_free_badge_always_renders_visibility_via_data_attribute(client: TestClient) -> None:
+    """Badge element is always in the DOM so the top-bar grid slot is
+    reserved — toggling F never restructures the surrounding columns.
+    Visibility is gated by [data-free-mode="false"] in CSS, asserted via
+    the data attribute (see test_free_mode_marker_attribute_flips)."""
     paced = client.post("/conceal")  # cheap re-render with free_mode=False
-    assert "free-badge" not in paced.text
+    assert "free-badge" in paced.text
+    assert 'data-free-mode="false"' in paced.text
     free = client.post("/free")
     assert "free-badge" in free.text
+    assert 'data-free-mode="true"' in free.text
 
 
 def test_free_returns_partial_fragment_not_full_page(client: TestClient) -> None:
@@ -61,9 +67,7 @@ def test_free_returns_partial_fragment_not_full_page(client: TestClient) -> None
     assert response.text.lstrip().startswith("<main")
 
 
-def test_reveal_in_free_mode_does_not_consume_token(
-    client: TestClient, state: ReaderState
-) -> None:
+def test_reveal_in_free_mode_does_not_consume_token(client: TestClient, state: ReaderState) -> None:
     """Bucket valve is suspended in Free Mode. Even after exhausting
     every token in paced mode, a Free-Mode Space still advances —
     that's the whole point of the escape hatch."""
@@ -86,9 +90,7 @@ def test_reveal_in_free_mode_does_not_advance_high_water(
     assert state.high_water_position == hw_before
 
 
-def test_reveal_in_free_mode_logs_no_reveal_event(
-    client: TestClient, state: ReaderState
-) -> None:
+def test_reveal_in_free_mode_logs_no_reveal_event(client: TestClient, state: ReaderState) -> None:
     """Free Mode is browse, not reading; the event log stays quiet so
     projection rebuilds don't confuse skim-through with paced reading."""
     client.post("/free")
@@ -131,9 +133,7 @@ def test_rate_past_frontier_in_free_mode_is_rejected(
     assert state.current_position not in state.chunk_ratings
 
 
-def test_pin_past_frontier_in_free_mode_is_rejected(
-    client: TestClient, state: ReaderState
-) -> None:
+def test_pin_past_frontier_in_free_mode_is_rejected(client: TestClient, state: ReaderState) -> None:
     client.post("/free")
     state.current_position = state.high_water_position + 1
     response = client.post("/pin")
@@ -150,9 +150,7 @@ def test_unrate_past_frontier_in_free_mode_is_rejected(
     assert response.status_code == 422
 
 
-def test_rate_at_frontier_in_free_mode_still_works(
-    client: TestClient, state: ReaderState
-) -> None:
+def test_rate_at_frontier_in_free_mode_still_works(client: TestClient, state: ReaderState) -> None:
     """The view-only gate is past high_water — at or before is fully
     interactive even with Free Mode on."""
     client.post("/free")

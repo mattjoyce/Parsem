@@ -13,10 +13,13 @@
 </head>
 <body data-document-id="{{ document_id }}">
 {% include "_reader_main.html" %}
-{# The "Aa" panel lives at page level so it survives #reader-main swaps. #}
+{# Page-level panels — outside #reader-main so partial swaps preserve them. #}
 {% include "_prefs_panel.html" %}
-{# prefs.js first — its capture-phase keydown listener owns ',' / Esc. #}
+{% include "_shortcuts_panel.html" %}
+{# prefs.js first — its capture-phase keydown listener owns ',' / Esc.
+   shortcuts.js owns '?' / Esc in the same capture phase. #}
 <script src="/static/prefs.js" defer></script>
+<script src="/static/shortcuts.js" defer></script>
 <script src="/static/reader_pins.js" defer></script>
 <script src="/static/reader.js" defer></script>
 <script src="/static/reader_lifecycle.js" defer></script>

@@ -306,10 +306,12 @@
 
   document.addEventListener("keydown", (event) => {
     if (isTypingTarget(event.target)) return;
-    // The "Aa" appearance panel (claude-rdk) is a modal — while it's
-    // open, reading shortcuts (Space/arrows/1-5/pins) must stay inert.
-    // prefs.js owns ',' (open) and Esc (close) in the capture phase.
+    // The "Aa" appearance panel (claude-rdk) and the "?" shortcuts
+    // cheatsheet are modals — while either is open, reading shortcuts
+    // (Space/arrows/1-5/pins/F) must stay inert. prefs.js owns ',' /
+    // Esc; shortcuts.js owns '?' / Esc — both in the capture phase.
     if (document.querySelector(".prefs-overlay:not([hidden])")) return;
+    if (document.querySelector(".shortcuts-overlay:not([hidden])")) return;
 
     // Review mode: Shift+ArrowUp toggles, Escape exits.
     if (event.key === "ArrowUp" && event.shiftKey) {

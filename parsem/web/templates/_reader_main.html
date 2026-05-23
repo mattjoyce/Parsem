@@ -19,13 +19,11 @@
         <div class="progress-bar__fill" style="width: {{ progress_percent }}%"></div>
       </div>
     </div>
-    {# Free Mode badge (Parsem-ci5). Renders only when free_mode is on
-       — the surface signal that the bucket valve is suspended. Sits
-       between the progress bar and the token dots; the dots are dimmed
-       to ghost in the same state via [data-free-mode="true"] CSS. #}
-    {% if free_mode %}
+    {# Free Mode badge (Parsem-ci5). Always rendered so the grid slot
+       between progress and tokens is reserved — hidden via CSS when
+       Free Mode is off so toggling F never restructures the top bar.
+       Bucket dots are dimmed in the same state via [data-free-mode]. #}
     <span class="free-badge" aria-label="Free Mode active — press F to return to paced">Free</span>
-    {% endif %}
     <div class="top-bar__tokens" aria-label="Reveal tokens"
          style="--regen-seconds: {{ regen_seconds }}s">
       {% for cls, delay in dot_classes %}
@@ -33,6 +31,7 @@
       {% endfor %}
     </div>
     {% include "_prefs_trigger.html" %}{# "Aa" — peer of the token dots #}
+    {% include "_shortcuts_trigger.html" %}{# "?" keycap — keyboard cheatsheet #}
   </header>
   <div class="reader-scroll">
     <div class="layout">

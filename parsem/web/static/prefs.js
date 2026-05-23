@@ -180,6 +180,9 @@
         return;
       }
       if (ev.key === "," && !isTypingTarget(ev.target)) {
+        // Suppress while the shortcuts cheatsheet is open — ',' should
+        // not silently swap it for the appearance panel underneath.
+        if (document.querySelector(".shortcuts-overlay:not([hidden])")) return;
         ev.preventDefault();
         openPanel();
       }

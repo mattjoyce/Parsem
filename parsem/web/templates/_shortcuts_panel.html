@@ -1,0 +1,37 @@
+{# Keyboard shortcuts cheatsheet — static, client-side only. Lists the
+   reading surface so shortcuts are discoverable without leaving the
+   page. Mirrors the "Aa" appearance panel: page-level overlay + dialog,
+   ?/click toggle to open, Esc/backdrop/× to close. Include OUTSIDE
+   #reader-main so it survives the partial swap. #}
+<div class="shortcuts-overlay" id="shortcuts-overlay" hidden>
+  <div class="shortcuts-panel" role="dialog" aria-modal="true" aria-labelledby="shortcuts-title">
+    <div class="shortcuts-panel__head">
+      <h2 id="shortcuts-title">Keyboard</h2>
+      <button type="button" class="shortcuts-close" data-shortcuts-close aria-label="Close">&times;</button>
+    </div>
+
+    <dl class="shortcuts-list">
+      <dt>Reading</dt>
+      <dd><span class="shortcuts-keys"><kbd>Space</kbd></span><span class="shortcuts-desc">reveal next chunk · resume to frontier</span></dd>
+      <dd><span class="shortcuts-keys"><kbd>'</kbd></span><span class="shortcuts-desc">recenter on current chunk</span></dd>
+      <dd><span class="shortcuts-keys"><kbd>Backspace</kbd></span><span class="shortcuts-desc">step back</span></dd>
+
+      <dt>Rate</dt>
+      <dd><span class="shortcuts-keys"><kbd>1</kbd>–<kbd>5</kbd></span><span class="shortcuts-desc">rate current chunk · press again to clear</span></dd>
+
+      <dt>Pin</dt>
+      <dd><span class="shortcuts-keys"><kbd>P</kbd></span><span class="shortcuts-desc">pin / unpin current chunk</span></dd>
+      <dd><span class="shortcuts-keys"><kbd>[</kbd> <kbd>]</kbd></span><span class="shortcuts-desc">previous / next pin</span></dd>
+      <dd><span class="shortcuts-keys"><kbd>{</kbd> <kbd>}</kbd></span><span class="shortcuts-desc">previous / next pin of same color</span></dd>
+
+      <dt>Modes</dt>
+      <dd><span class="shortcuts-keys"><kbd>F</kbd></span><span class="shortcuts-desc">Free Mode · reveal all, suspend the bucket</span></dd>
+      <dd><span class="shortcuts-keys"><kbd>Shift</kbd>+<kbd>&uarr;</kbd></span><span class="shortcuts-desc">review mode</span></dd>
+
+      <dt>Panels</dt>
+      <dd><span class="shortcuts-keys"><kbd>,</kbd></span><span class="shortcuts-desc">appearance</span></dd>
+      <dd><span class="shortcuts-keys"><kbd>?</kbd></span><span class="shortcuts-desc">this list</span></dd>
+      <dd><span class="shortcuts-keys"><kbd>Esc</kbd></span><span class="shortcuts-desc">close any panel</span></dd>
+    </dl>
+  </div>
+</div>
