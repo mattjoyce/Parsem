@@ -1,6 +1,6 @@
 ---
 id: 5
-status: doing
+status: done
 priority: High
 blocked_by: []
 assignee: "@matt"
@@ -53,3 +53,7 @@ pipeline — confirm with Matt before acting.
   (awaiting Matt's confirmation, destructive): `raw/2411.15594v6-retry.pdf` (now
   redundant), `raw/pipeline-test.md` (stale 2026-05-11 test), and orphan
   `converted/6.*` (output for a doc 6 that no longer exists in the DB). (by @assistant)
+- 2026-06-04: Matt confirmed cleanup. Deleted `raw/2411.15594v6-retry.pdf`,
+  `raw/pipeline-test.md`, and `converted/6.*`. Both `inbound/raw/` and
+  `inbound/converted/` are now empty. Card complete: all stranded docs ready,
+  inbound clean. (by @assistant)
