@@ -254,37 +254,46 @@
   }
 
   // ─── Reader notes (notes-export) ───────────────────────────────────
-  // `n` opens the current chunk's gutter editor; Enter saves, Esc
-  // cancels. Save POSTs /note and applies the returned fragment, which
-  // re-renders the saved note beneath the chunk and reveals the top-bar
-  // "Notes ↗" link. The editor is a typing target, so the global
-  // keydown handler ignores keys while it's focused — Enter/Esc are
-  // handled by the dedicated capture-phase listener below.
-  function openNoteEditor() {
+  // A page-level modal (#note-overlay, in reader.html so it survives
+  // partial swaps) holds the editor. The gutter square glyph or `n`
+  // opens it, prefilled with the current chunk's existing note; Save
+  // POSTs /note and re-renders the reader; Esc / × / Cancel / backdrop
+  // close it.
+  function noteOverlay() {
+    return document.getElementById("note-overlay");
+  }
+  function noteDialogOpen() {
+    const ov = noteOverlay();
+    return !!(ov && !ov.hidden);
+  }
+  function openNoteDialog() {
+    const ov = noteOverlay();
+    if (!ov) return;
     const cc = currentChunk();
-    const editor = cc && cc.querySelector(".note-editor");
-    if (!editor) return;
-    editor.hidden = false;
-    cc.classList.add("chunk--noting");
-    const ta = editor.querySelector(".note-editor__text");
+    const existing = cc ? cc.querySelector(".chunk-note") : null;
+    const ta = ov.querySelector(".note-panel__text");
+    const title = ov.querySelector(".note-panel__title");
+    const { current } = readerPositions();
+    if (title) {
+      title.textContent = Number.isNaN(current) ? "Note" : `Note · chunk ${current}`;
+    }
+    if (ta) ta.value = existing ? existing.textContent : "";
+    ov.hidden = false;
     if (ta) {
       ta.focus();
       ta.setSelectionRange(ta.value.length, ta.value.length);
     }
   }
-
-  function closeNoteEditor(editor) {
-    if (!editor) return;
-    editor.hidden = true;
-    const chunk = editor.closest(".chunk");
-    if (chunk) chunk.classList.remove("chunk--noting");
+  function closeNoteDialog() {
+    const ov = noteOverlay();
+    if (ov) ov.hidden = true;
   }
 
   // Dedicated save path (not performAction) so we can read the
   // X-Note-Export header — the export is best-effort server-side, so a
-  // failed file write still saves the note; we just warn. settle is
-  // skipped: applyResponseFragment preserves the anchor, and yanking the
-  // viewport right after typing reads as a jolt.
+  // failed file write still saves the note; we just warn. The re-render
+  // updates the chunk's note display, the square glyph, and the top-bar
+  // notes link.
   async function saveNote(text) {
     const response = await fetch("/note", {
       method: "POST",
@@ -299,25 +308,43 @@
     }
     applyResponseFragment(await response.text());
   }
+  function saveNoteDialog() {
+    const ov = noteOverlay();
+    const ta = ov ? ov.querySelector(".note-panel__text") : null;
+    saveNote(ta ? ta.value : "").then(closeNoteDialog);
+  }
 
-  // Enter/Esc inside the editor. Capture phase + stopImmediatePropagation
-  // so neither reader_pins.js nor the global handler also react.
+  // Dialog-local clicks (Save / Cancel / × / backdrop).
+  document.addEventListener("click", (event) => {
+    if (!noteDialogOpen()) return;
+    if (event.target.closest("[data-note-save]")) {
+      event.preventDefault();
+      saveNoteDialog();
+      return;
+    }
+    if (event.target.closest("[data-note-close]")) {
+      event.preventDefault();
+      closeNoteDialog();
+      return;
+    }
+    if (event.target === noteOverlay()) closeNoteDialog(); // backdrop
+  });
+
+  // Dialog-local keys. Capture phase + stopImmediatePropagation so the
+  // reading shortcuts and reader_pins don't also fire. Cmd/Ctrl+Enter
+  // saves (plain Enter is a newline in the dialog); Esc closes.
   document.addEventListener(
     "keydown",
     (event) => {
-      const editor =
-        event.target.closest && event.target.closest(".note-editor");
-      if (!editor) return;
+      if (!noteDialogOpen()) return;
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopImmediatePropagation();
-        closeNoteEditor(editor);
-        settleAtCurrent({ behavior: "smooth" });
-      } else if (event.key === "Enter" && !event.shiftKey) {
+        closeNoteDialog();
+      } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        const ta = editor.querySelector(".note-editor__text");
-        saveNote(ta ? ta.value : "");
+        saveNoteDialog();
       }
     },
     true,
@@ -382,6 +409,7 @@
     // Esc; shortcuts.js owns '?' / Esc — both in the capture phase.
     if (document.querySelector(".prefs-overlay:not([hidden])")) return;
     if (document.querySelector(".shortcuts-overlay:not([hidden])")) return;
+    if (noteDialogOpen()) return;
 
     // Review mode: Shift+ArrowUp toggles, Escape exits.
     if (event.key === "ArrowUp" && event.shiftKey) {
@@ -409,12 +437,10 @@
       return;
     }
 
-    // `n` opens the note editor on the current chunk (notes-export). A
-    // UI affordance, not a state mutation — no return-first guard; the
-    // textarea focus scrolls the editor into view.
+    // `n` opens the note dialog for the current chunk (notes-export).
     if (event.key === "n" || event.key === "N") {
       event.preventDefault();
-      openNoteEditor();
+      openNoteDialog();
       return;
     }
 
@@ -449,42 +475,25 @@
     mouseDownT = Date.now();
   });
   document.addEventListener("click", (event) => {
-    // Note editor Save / Cancel and reopen-from-saved-note (notes-export).
-    // Handled first so the chunk-body click logic below never fires on them.
-    const noteSave = event.target.closest(".note-save");
-    if (noteSave) {
-      event.preventDefault();
-      const editor = noteSave.closest(".note-editor");
-      const ta = editor && editor.querySelector(".note-editor__text");
-      saveNote(ta ? ta.value : "");
-      return;
-    }
-    const noteCancel = event.target.closest(".note-cancel");
-    if (noteCancel) {
-      event.preventDefault();
-      closeNoteEditor(noteCancel.closest(".note-editor"));
-      settleAtCurrent({ behavior: "smooth" });
-      return;
-    }
+    // Clicking a saved note (on the current chunk) reopens the dialog to
+    // edit it (notes-export). Handled before the chunk-body click logic.
     const noteDisplay = event.target.closest(".chunk-note");
     if (noteDisplay && noteDisplay.closest(".chunk--current")) {
       event.preventDefault();
-      openNoteEditor();
+      openNoteDialog();
       return;
     }
-    // Note glyph (pencil) in the current chunk's gutter — pointer peer
-    // of the `n` key (notes-export).
-    const noteGlyph = event.target.closest(".note-glyph");
-    if (noteGlyph) {
-      event.preventDefault();
-      openNoteEditor();
-      return;
-    }
-    // Per-chunk action glyph click (claude-jvs.3) — copy-link only.
-    // Native browser select-and-copy handles chunk content; no
-    // separate copy-text affordance. stopPropagation keeps the
-    // chunk-body handler below from firing on the same click.
+    // Per-chunk action glyphs (claude-jvs.3): copy-link on every chunk,
+    // the note square on the current chunk (notes-export). Native browser
+    // select-and-copy handles chunk content; no separate copy-text button.
+    // stopPropagation keeps the chunk-body handler below from also firing.
     const action = event.target.closest(".chunk-action");
+    if (action && action.dataset.action === "note") {
+      event.preventDefault();
+      event.stopPropagation();
+      openNoteDialog();
+      return;
+    }
     if (action && action.dataset.action === "copy-link") {
       event.preventDefault();
       event.stopPropagation();

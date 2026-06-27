@@ -16,6 +16,7 @@
 {# Page-level panels — outside #reader-main so partial swaps preserve them. #}
 {% include "_prefs_panel.html" %}
 {% include "_shortcuts_panel.html" %}
+{% include "_note_panel.html" %}
 {# prefs.js first — its capture-phase keydown listener owns ',' / Esc.
    shortcuts.js owns '?' / Esc in the same capture phase. #}
 <script src="/static/prefs.js" defer></script>

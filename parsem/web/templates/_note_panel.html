@@ -1,0 +1,21 @@
+{# Note dialog (notes-export) — page-level modal, included OUTSIDE
+   #reader-main so it survives reader partial swaps. reader.js owns all
+   behaviour: the chunk's note square (□ / ▣) or the `n` key opens it,
+   it prefills the current chunk's existing note, Save POSTs /note and
+   re-renders the reader, and Esc / × / Cancel / backdrop close it.
+   Same scrim + chrome conventions as the "Aa" appearance panel. #}
+<div class="note-overlay" id="note-overlay" hidden>
+  <div class="note-panel" role="dialog" aria-modal="true" aria-labelledby="note-panel-title">
+    <div class="note-panel__head">
+      <h2 class="note-panel__title" id="note-panel-title">Note</h2>
+      <button type="button" class="note-panel__close" data-note-close aria-label="Close">&times;</button>
+    </div>
+    <textarea class="note-panel__text" aria-labelledby="note-panel-title"
+      placeholder="Write your note for this chunk…"></textarea>
+    <div class="note-panel__actions">
+      <button type="button" class="note-panel__save" data-note-save>Save</button>
+      <button type="button" class="note-panel__cancel" data-note-close>Cancel</button>
+    </div>
+    <p class="note-panel__foot"><kbd>&#8984;/Ctrl</kbd>+<kbd>Enter</kbd> save · <kbd>Esc</kbd> close</p>
+  </div>
+</div>

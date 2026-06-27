@@ -38,28 +38,64 @@ def test_note_file_name_prefixes_with_id() -> None:
     assert note_file_name(7, "My Doc") == "7-my-doc.md"
 
 
-def test_render_includes_prose_note_and_backlink() -> None:
+def test_render_has_frontmatter_about_the_document() -> None:
     md = render_notes_markdown(
         title="Doc",
+        document_id=3,
+        reader_url="http://h/documents/3/reader",
+        notes={1: "x"},
+        chunks=[_chunk(1, "body")],
+        generated_at="2026-06-28T00:00:00+00:00",
+    )
+    head = md.split("---", 2)  # ["", "<frontmatter>", "<rest>"]
+    assert md.startswith("---\n")
+    assert 'document: "Doc"' in head[1]
+    assert "document_id: 3" in head[1]
+    assert "reader_url: http://h/documents/3/reader" in head[1]
+    assert "notes_count: 1" in head[1]
+    assert "exported: 2026-06-28T00:00:00+00:00" in head[1]
+
+
+def test_render_section_links_to_chunk_with_prose_and_note() -> None:
+    md = render_notes_markdown(
+        title="Doc",
+        document_id=3,
         reader_url="http://h/documents/3/reader",
         notes={1: "first thought"},
         chunks=[_chunk(0, "intro"), _chunk(1, "the prose body")],
     )
-    assert "# Notes — Doc" in md
-    assert "## Chunk 1" in md
-    assert "> the prose body" in md  # prose blockquoted
+    # source is a [!quote] callout whose title links to the chunk
+    assert (
+        "> [!quote] Chunk 1 · [open in reader →](http://h/documents/3/reader?chunk=1)"
+        in md
+    )
+    assert "> the prose body" in md  # prose inside the quote callout
+    # the note is a [!note] callout titled "Notes about Chunk N"
+    assert "> [!note] Notes about Chunk 1" in md
     assert "first thought" in md
-    assert "[↩ Open in Parsem](http://h/documents/3/reader?chunk=1)" in md
 
 
 def test_render_orders_entries_by_position() -> None:
     md = render_notes_markdown(
         title="Doc",
+        document_id=3,
         reader_url="http://h/documents/3/reader",
         notes={2: "second", 0: "zeroth"},
         chunks=[_chunk(0, "a"), _chunk(1, "b"), _chunk(2, "c")],
     )
-    assert md.index("## Chunk 0") < md.index("## Chunk 2")
+    assert md.index("Chunk 0") < md.index("Chunk 2")
+
+
+def test_render_empty_notes_is_frontmatter_plus_placeholder() -> None:
+    md = render_notes_markdown(
+        title="Doc",
+        document_id=3,
+        reader_url="http://h/documents/3/reader",
+        notes={},
+        chunks=[_chunk(0, "a")],
+    )
+    assert "notes_count: 0" in md
+    assert "_No notes yet._" in md
 
 
 def test_render_survives_note_with_no_matching_chunk() -> None:
@@ -67,12 +103,13 @@ def test_render_survives_note_with_no_matching_chunk() -> None:
     The note text must still render; only the prose is omitted."""
     md = render_notes_markdown(
         title="Doc",
+        document_id=3,
         reader_url="http://h/documents/3/reader",
         notes={9: "orphan note"},
         chunks=[_chunk(0, "a")],
     )
     assert "orphan note" in md
-    assert "## Chunk 9" in md
+    assert "> [!note] Notes about Chunk 9" in md
 
 
 def test_write_creates_file_and_returns_path(tmp_path: Path) -> None:

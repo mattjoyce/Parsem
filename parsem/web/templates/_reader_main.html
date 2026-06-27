@@ -30,13 +30,14 @@
       <span class="dot dot--{{ cls }}" style="--delay: {{ delay }}s" aria-hidden="true">●</span>
       {% endfor %}
     </div>
-    {# "Notes ↗" — opens this document's exported notes file (notes-export,
-       reader→file deep link). Slot always rendered (mirrors the free-badge)
-       so the first saved note never reflows the bar; visibility:hidden via
-       --empty until a note exists. #}
-    <a class="top-bar__notes{% if not note_file_href %} top-bar__notes--empty{% endif %}"
-       {% if note_file_href %}href="{{ note_file_href }}"{% endif %}
-       title="Open this document's exported notes file">Notes&nbsp;&#8599;</a>
+    {# Notes symbol (▤) — opens GET /documents/{id}/notes in a new tab:
+       frontmatter + each noted chunk (link, content, note). A shareable
+       HTTP URL, safe to hand to an AI agent. Slot always rendered
+       (mirrors the free-badge) so the first note never reflows the bar;
+       visibility:hidden via --empty until the doc has a note. #}
+    <a class="top-bar__notes{% if not chunk_notes %} top-bar__notes--empty{% endif %}"
+       href="/documents/{{ document_id }}/notes" target="_blank" rel="noopener"
+       title="Open notes (new tab)" aria-label="Open notes in a new tab">&#9636;</a>
     {% include "_prefs_trigger.html" %}{# "Aa" — peer of the token dots #}
     {% include "_shortcuts_trigger.html" %}{# "?" keycap — keyboard cheatsheet #}
   </header>
@@ -58,12 +59,19 @@
           only). Visual treatment parallels rating-prompt: always
           rendered at low opacity, brightens on hover. Native browser
           select-and-copy handles chunk content — no copy-text button
-          needed. #}<nav
+          needed. The note square (□ / ▣) is added on the CURRENT chunk
+          only, stacked below copy-link and aligned with it — click it
+          (or press n) to open the note dialog. #}<nav
             class="chunk-actions" aria-label="Chunk actions"
           ><button
               type="button" class="chunk-action" data-action="copy-link"
               aria-label="Copy deep link to this chunk"
-            >&#9901;</button></nav>{{ entry.html }}{# Inline reveal glyph (spec §8a.4,
+            >&#9901;</button>{% if entry.chunk.position == current_position %}<button
+              type="button"
+              class="chunk-action chunk-action--note{% if current_chunk_note %} chunk-action--has-note{% endif %}"
+              data-action="note"
+              aria-label="{% if current_chunk_note %}Edit note{% else %}Add note{% endif %} (press n)"
+            >{% if current_chunk_note %}&#9635;{% else %}&#9633;{% endif %}</button>{% endif %}</nav>{{ entry.html }}{# Inline reveal glyph (spec §8a.4,
           claude-axx.8 + claude-jvs UAT) is injected by build_reader_
           context directly into entry.html for the current chunk —
           inserted before the last text-bearing closing tag so it
@@ -78,15 +86,7 @@
           fixes that. Glyph color reflects current rating (rating-bar
           palette). Pips are still <button.rating-dot> so existing
           click toggle + keyboard 1-5 keep working. Current chunk
-          only — rating is "rate THIS chunk you just read". #}{# Note affordance (notes-export) — pencil glyph in the bottom-
-          right gutter of the current chunk, peer of the rating triangle.
-          Click opens the editor (so does the `n` key); data-has-note
-          tints it when the chunk already carries a note. Current chunk
-          only — you note the chunk you just read. #}{% if entry.chunk.position == current_position %}<nav
-            class="note-prompt" aria-label="Add or edit note"
-            {% if current_chunk_note %}data-has-note="true"{% endif %}
-          ><button type="button" class="note-glyph" data-action="note"
-            aria-label="Add or edit a note (press n)">&#9998;</button></nav>{% endif %}{% if entry.chunk.position == current_position %}<nav
+          only — rating is "rate THIS chunk you just read". #}{% if entry.chunk.position == current_position %}<nav
             class="rating-prompt" aria-label="Rate effort"
             {% if current_chunk_rating %}data-current-rating="{{ current_chunk_rating }}"{% endif %}
           ><span class="rating-pips">
@@ -107,16 +107,7 @@
           beneath the chunk. Rendered for any chunk that has one;
           clicking it on the current chunk reopens the editor (JS). #}{% if entry.chunk.position in chunk_notes %}<div
             class="chunk-note" aria-label="Your note"
-          >{{ chunk_notes[entry.chunk.position] }}</div>{% endif %}{# Note editor — current chunk only; revealed by the `n`
-          key (JS toggles [hidden]). Prefilled with the existing note so
-          `n` edits in place. Enter saves, Shift+Enter newline, Esc
-          cancels (POST /note). #}{% if entry.chunk.position == current_position %}<form
-            class="note-editor" hidden aria-label="Note editor"
-          ><textarea class="note-editor__text" rows="3"
-            placeholder="Write a note — Enter saves, Shift+Enter newline, Esc cancels"
-          >{{ current_chunk_note or '' }}</textarea><div class="note-editor__actions"
-          ><button type="button" class="note-save">Save</button><button
-            type="button" class="note-cancel">Cancel</button></div></form>{% endif %}</article>
+          >{{ chunk_notes[entry.chunk.position] }}</div>{% endif %}</article>
         {% endfor %}
         {% if next_chunk %}
         {# Preview always sits at the bottom of the column — it shows

@@ -660,30 +660,36 @@ body {
 .rating-bar--5 { background: var(--rating-5); }
 
 /* === Reader notes (notes-export) ===================================
- * Press `n` on the current chunk to open the gutter editor; saved
- * notes show beneath their chunk and are exported to a per-document
- * markdown file. Two deep-link directions: the file links back to the
- * reader (?chunk=N), and this top-bar link opens the file. */
+ * Click a chunk to make it current, then its note square (□ empty / ▣
+ * has-note) sits in the top-right gutter beside the copy-link glyph.
+ * Clicking it (or pressing `n`) opens a modal dialog to write/edit the
+ * note. Saved notes show beneath their chunk, are exported to a per-
+ * document markdown file, and are served at GET /documents/{id}/notes
+ * (the top-bar symbol opens that, shareable with AI agents). */
 
-/* Top-bar "Notes ↗" link — peer of the home link / triggers. Slot is
- * always reserved (mirrors the free-badge); visibility:hidden until the
- * document has at least one note so the first save never reflows the
- * bar. The href is a file:// URL the OS opens (Obsidian, editor, …). */
+/* Top-bar notes symbol (▤) — peer of the home link / triggers, opens
+ * the notes page in a new tab. Slot always reserved (mirrors the
+ * free-badge); visibility:hidden until the document has a note so the
+ * first save never reflows the bar. */
 .top-bar__notes {
   justify-self: end;
-  font-size: 0.82em;
-  white-space: nowrap;
+  font-size: 1em;
+  line-height: 1;
   color: var(--ink);
   opacity: 0.55;
   text-decoration: none;
   transition: opacity 120ms ease;
 }
-.top-bar__notes:hover { opacity: 1; text-decoration: underline; }
+.top-bar__notes:hover { opacity: 1; }
 .top-bar__notes--empty { visibility: hidden; }
+
+/* Note square in the chunk-actions group — accent-tinted when the chunk
+ * already carries a note (the glyph itself also switches □ → ▣). */
+.chunk-action--has-note { color: var(--accent); opacity: 0.9; }
 
 /* Saved note shown beneath its chunk — a left-ruled margin annotation,
  * quieter than prose, in the accent ink. Clickable on the current chunk
- * to reopen the editor (JS). */
+ * to reopen the dialog (JS). */
 .chunk-note {
   margin: 0.5em 0 0;
   padding: 0.15em 0 0.15em 0.7em;
@@ -694,80 +700,89 @@ body {
   line-height: 1.5;
   white-space: pre-wrap;
 }
-.chunk--current .chunk-note { cursor: text; }
-/* While the editor is open (JS adds .chunk--noting) the static note is
- * redundant — the same text is live in the textarea. */
-.chunk--noting .chunk-note { display: none; }
+.chunk--current .chunk-note { cursor: pointer; }
 
-/* Note affordance — pencil glyph in the bottom-right gutter of the
- * current chunk, sitting just above the rating triangle as its peer
- * (same right offset). Resting at low opacity, brightens on hover;
- * tinted in the accent colour when the chunk already carries a note.
- * Click opens the editor (the `n` key does the same). */
-.note-prompt {
-  position: absolute;
-  right: calc(-1 * var(--gutter-right) + 16px);
-  bottom: 1.5em;
+/* Note dialog (notes-export) — same scrim + chrome as the "Aa" panel. */
+.note-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
   display: flex;
-  align-items: center;
-  user-select: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh 1rem 1rem;
+  overflow-y: auto;
+  background: rgba(20, 18, 14, 0.42);
 }
-.note-glyph {
-  background: none;
+.note-overlay[hidden] { display: none; }
+.note-panel {
+  width: min(560px, 100%);
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--tint-2);
+  border-radius: 10px;
+  box-shadow: 0 14px 44px rgba(20, 18, 14, 0.28);
+  padding: 1.05rem 1.25rem 1.2rem;
+  font-family: var(--prose-font);
+}
+.note-panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.6rem;
+}
+.note-panel__head h2 { margin: 0; font-size: 1.05rem; font-weight: 700; }
+.note-panel__close {
+  appearance: none;
+  background: transparent;
   border: 0;
-  padding: 0;
+  padding: 0.1rem 0.35rem;
   font: inherit;
-  font-size: 0.95em;
+  font-size: 1.1rem;
   line-height: 1;
-  color: var(--tint-3);
-  opacity: 0.4;
+  color: var(--ink);
+  opacity: 0.5;
   cursor: pointer;
-  transition: opacity 120ms ease, color 120ms ease;
+  border-radius: 5px;
+  transition: opacity 120ms ease, background 120ms ease;
 }
-.note-prompt:hover .note-glyph { opacity: 1; }
-.note-prompt[data-has-note] .note-glyph { color: var(--accent); opacity: 0.85; }
-/* Editor open → the glyph is redundant (textarea is the surface now). */
-.chunk--noting .note-prompt { display: none; }
-
-/* Inline note editor — revealed by `n` on the current chunk (JS toggles
- * [hidden]). Kept compact so it doesn't shove the reading line. */
-.note-editor { margin: 0.5em 0 0; }
-.note-editor[hidden] { display: none; }
-.note-editor__text {
+.note-panel__close:hover { opacity: 1; background: var(--tint-1); }
+.note-panel__text {
   width: 100%;
   box-sizing: border-box;
+  min-height: 8.5rem;
   resize: vertical;
   font: inherit;
-  font-size: 0.92em;
+  font-size: 1rem;
   line-height: 1.5;
   color: var(--ink);
   background: var(--bg);
-  border: 1px solid var(--tint-1);
-  border-radius: 4px;
-  padding: 0.4em 0.55em;
+  border: 1px solid var(--tint-2);
+  border-radius: 6px;
+  padding: 0.6rem 0.7rem;
 }
-.note-editor__text:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-.note-editor__actions {
+.note-panel__text:focus { outline: none; border-color: var(--accent); }
+.note-panel__actions {
   display: flex;
-  gap: 0.5em;
-  margin-top: 0.35em;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
 }
-.note-editor__actions button {
+.note-panel__save,
+.note-panel__cancel {
   font: inherit;
-  font-size: 0.82em;
-  padding: 0.2em 0.7em;
-  border: 1px solid var(--tint-1);
-  border-radius: 4px;
+  font-size: 0.9rem;
+  padding: 0.35rem 0.9rem;
+  border: 1px solid var(--tint-2);
+  border-radius: 6px;
   background: var(--bg);
   color: var(--ink);
   cursor: pointer;
   transition: background 120ms ease;
 }
-.note-editor__actions button:hover { background: var(--tint-1); }
-.note-save { font-weight: 600; }
+.note-panel__save { font-weight: 600; }
+.note-panel__save:hover,
+.note-panel__cancel:hover { background: var(--tint-1); }
+.note-panel__foot { margin: 0.7rem 0 0; font-size: 0.78rem; opacity: 0.6; }
 
 /* === Library v2 — tile grid + tile anatomy =========================
  * ADR 0005, bd Parsem-7wu.2. Replaces the v1 <table class="library">

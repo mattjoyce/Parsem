@@ -124,3 +124,41 @@ def test_note_survives_round_trip_through_db(client: TestClient, state: ReaderSt
     )
     assert reloaded is not None
     assert reloaded.chunk_notes[pos] == "durable"
+
+
+def test_current_chunk_renders_the_note_square(client: TestClient) -> None:
+    """The discoverable affordance: the current chunk carries a note
+    square in its action gutter (data-action='note'); empty square □
+    when no note, filled ▣ once one exists."""
+    before = client.get("/documents/1/reader").text
+    assert 'data-action="note"' in before
+    assert "&#9633;" in before  # □ empty-note glyph (HTML entity)
+    after = client.post("/note", json={"text": "noted"}).text
+    assert "&#9635;" in after  # ▣ has-note glyph
+    assert "chunk-action--has-note" in after
+
+
+def test_notes_endpoint_serves_markdown_with_frontmatter(
+    client: TestClient, state: ReaderState
+) -> None:
+    pos = state.current_position
+    client.post("/note", json={"text": "agent-visible note"})
+    resp = client.get("/documents/1/notes")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/plain")
+    body = resp.text
+    assert body.startswith("---\n")  # YAML frontmatter
+    assert "document_id: 1" in body
+    assert f"?chunk={pos})" in body  # link to the chunk
+    assert "agent-visible note" in body  # the note
+    assert "> " in body  # the chunk prose, blockquoted
+
+
+def test_notes_endpoint_404_for_missing_document(client: TestClient) -> None:
+    assert client.get("/documents/9999/notes").status_code == 404
+
+
+def test_top_bar_notes_symbol_links_to_endpoint(client: TestClient) -> None:
+    after = client.post("/note", json={"text": "x"}).text
+    assert 'href="/documents/1/notes"' in after
+    assert 'target="_blank"' in after
