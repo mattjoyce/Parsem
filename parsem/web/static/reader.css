@@ -1218,9 +1218,10 @@ body {
 /* Preview gutter (spec §9.5) — the next chunk rendered blurred,
  * "preparation, not a tease." A hairline top border establishes the
  * region break (preview is its own zone, not orphaned faded prose).
- * Continuous gentle breathing — wider opacity range, symmetric, slower —
- * signals "forming." Capped height + soft mask taper so a long next
- * chunk doesn't slab over the rest of the page.
+ * A few gentle breaths after each reveal — wider opacity range,
+ * symmetric, slower — signals "forming," then settles. Capped height +
+ * soft mask taper so a long next chunk doesn't slab over the rest of
+ * the page.
  *
  * The 70% lower-eye-line *positioning* belongs to Parsem-0if's smooth
  * scroll — this CSS supplies the visual state, not the scroll target.
@@ -1233,7 +1234,13 @@ body {
   overflow: hidden;
   filter: blur(3.5px);
   opacity: 0.6;
-  animation: preview-pulse 4.5s ease-in-out infinite;
+  /* Finite "forming" pulse. The server recreates this element on every
+   * partial render, so each reveal re-triggers the animation; between
+   * reveals it rests. It used to be `infinite`, which re-rasterised this
+   * blurred + masked layer ~60fps forever — pinning a CPU core whenever
+   * the reader sat open and idle. A bounded count drops idle CPU to ~0
+   * between reveals while keeping the breathing cue. */
+  animation: preview-pulse 4.5s ease-in-out 3;
   pointer-events: none;
   user-select: none;
   -webkit-mask-image: linear-gradient(to bottom, black 60%, transparent 100%);
@@ -1246,6 +1253,12 @@ body {
 @keyframes preview-pulse {
   0%, 100% { opacity: 0.50; }
   50%      { opacity: 0.65; }
+}
+
+/* Respect reduced-motion: no breathing, just a static blurred preview —
+ * zero animation cost for those who opt out (and a free battery win). */
+@media (prefers-reduced-motion: reduce) {
+  .preview { animation: none; }
 }
 
 body.review-mode .chunk--settled { opacity: 0.9; }
