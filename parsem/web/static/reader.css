@@ -699,6 +699,36 @@ body {
  * redundant — the same text is live in the textarea. */
 .chunk--noting .chunk-note { display: none; }
 
+/* Note affordance — pencil glyph in the bottom-right gutter of the
+ * current chunk, sitting just above the rating triangle as its peer
+ * (same right offset). Resting at low opacity, brightens on hover;
+ * tinted in the accent colour when the chunk already carries a note.
+ * Click opens the editor (the `n` key does the same). */
+.note-prompt {
+  position: absolute;
+  right: calc(-1 * var(--gutter-right) + 16px);
+  bottom: 1.5em;
+  display: flex;
+  align-items: center;
+  user-select: none;
+}
+.note-glyph {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-size: 0.95em;
+  line-height: 1;
+  color: var(--tint-3);
+  opacity: 0.4;
+  cursor: pointer;
+  transition: opacity 120ms ease, color 120ms ease;
+}
+.note-prompt:hover .note-glyph { opacity: 1; }
+.note-prompt[data-has-note] .note-glyph { color: var(--accent); opacity: 0.85; }
+/* Editor open → the glyph is redundant (textarea is the surface now). */
+.chunk--noting .note-prompt { display: none; }
+
 /* Inline note editor — revealed by `n` on the current chunk (JS toggles
  * [hidden]). Kept compact so it doesn't shove the reading line. */
 .note-editor { margin: 0.5em 0 0; }

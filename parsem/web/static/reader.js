@@ -472,6 +472,14 @@
       openNoteEditor();
       return;
     }
+    // Note glyph (pencil) in the current chunk's gutter — pointer peer
+    // of the `n` key (notes-export).
+    const noteGlyph = event.target.closest(".note-glyph");
+    if (noteGlyph) {
+      event.preventDefault();
+      openNoteEditor();
+      return;
+    }
     // Per-chunk action glyph click (claude-jvs.3) — copy-link only.
     // Native browser select-and-copy handles chunk content; no
     // separate copy-text affordance. stopPropagation keeps the

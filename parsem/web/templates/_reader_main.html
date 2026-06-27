@@ -78,7 +78,15 @@
           fixes that. Glyph color reflects current rating (rating-bar
           palette). Pips are still <button.rating-dot> so existing
           click toggle + keyboard 1-5 keep working. Current chunk
-          only — rating is "rate THIS chunk you just read". #}{% if entry.chunk.position == current_position %}<nav
+          only — rating is "rate THIS chunk you just read". #}{# Note affordance (notes-export) — pencil glyph in the bottom-
+          right gutter of the current chunk, peer of the rating triangle.
+          Click opens the editor (so does the `n` key); data-has-note
+          tints it when the chunk already carries a note. Current chunk
+          only — you note the chunk you just read. #}{% if entry.chunk.position == current_position %}<nav
+            class="note-prompt" aria-label="Add or edit note"
+            {% if current_chunk_note %}data-has-note="true"{% endif %}
+          ><button type="button" class="note-glyph" data-action="note"
+            aria-label="Add or edit a note (press n)">&#9998;</button></nav>{% endif %}{% if entry.chunk.position == current_position %}<nav
             class="rating-prompt" aria-label="Rate effort"
             {% if current_chunk_rating %}data-current-rating="{{ current_chunk_rating }}"{% endif %}
           ><span class="rating-pips">
