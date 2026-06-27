@@ -130,10 +130,11 @@ body {
  * appears/disappears at heading transitions. */
 .top-bar {
   display: grid;
-  /* home | identity | progress | free-badge | token dots | "Aa" trigger | "?" trigger
-   * — the free-badge slot is always reserved (visibility:hidden when off)
-   * so toggling F never reflows the surrounding columns. */
-  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto auto;
+  /* home | identity | progress | free-badge | token dots | notes link |
+   * "Aa" trigger | "?" trigger — the free-badge and notes slots are
+   * always reserved (visibility:hidden when off) so toggling F or
+   * saving the first note never reflows the surrounding columns. */
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto auto auto;
   align-items: center;
   gap: 1.25em;
   padding: 0.6em 1em;
@@ -657,6 +658,86 @@ body {
 .rating-bar--3 { background: var(--rating-3); }
 .rating-bar--4 { background: var(--rating-4); }
 .rating-bar--5 { background: var(--rating-5); }
+
+/* === Reader notes (notes-export) ===================================
+ * Press `n` on the current chunk to open the gutter editor; saved
+ * notes show beneath their chunk and are exported to a per-document
+ * markdown file. Two deep-link directions: the file links back to the
+ * reader (?chunk=N), and this top-bar link opens the file. */
+
+/* Top-bar "Notes ↗" link — peer of the home link / triggers. Slot is
+ * always reserved (mirrors the free-badge); visibility:hidden until the
+ * document has at least one note so the first save never reflows the
+ * bar. The href is a file:// URL the OS opens (Obsidian, editor, …). */
+.top-bar__notes {
+  justify-self: end;
+  font-size: 0.82em;
+  white-space: nowrap;
+  color: var(--ink);
+  opacity: 0.55;
+  text-decoration: none;
+  transition: opacity 120ms ease;
+}
+.top-bar__notes:hover { opacity: 1; text-decoration: underline; }
+.top-bar__notes--empty { visibility: hidden; }
+
+/* Saved note shown beneath its chunk — a left-ruled margin annotation,
+ * quieter than prose, in the accent ink. Clickable on the current chunk
+ * to reopen the editor (JS). */
+.chunk-note {
+  margin: 0.5em 0 0;
+  padding: 0.15em 0 0.15em 0.7em;
+  border-left: 2px solid var(--accent);
+  color: var(--ink);
+  opacity: 0.78;
+  font-size: 0.92em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.chunk--current .chunk-note { cursor: text; }
+/* While the editor is open (JS adds .chunk--noting) the static note is
+ * redundant — the same text is live in the textarea. */
+.chunk--noting .chunk-note { display: none; }
+
+/* Inline note editor — revealed by `n` on the current chunk (JS toggles
+ * [hidden]). Kept compact so it doesn't shove the reading line. */
+.note-editor { margin: 0.5em 0 0; }
+.note-editor[hidden] { display: none; }
+.note-editor__text {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  font: inherit;
+  font-size: 0.92em;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--bg);
+  border: 1px solid var(--tint-1);
+  border-radius: 4px;
+  padding: 0.4em 0.55em;
+}
+.note-editor__text:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.note-editor__actions {
+  display: flex;
+  gap: 0.5em;
+  margin-top: 0.35em;
+}
+.note-editor__actions button {
+  font: inherit;
+  font-size: 0.82em;
+  padding: 0.2em 0.7em;
+  border: 1px solid var(--tint-1);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.note-editor__actions button:hover { background: var(--tint-1); }
+.note-save { font-weight: 600; }
 
 /* === Library v2 — tile grid + tile anatomy =========================
  * ADR 0005, bd Parsem-7wu.2. Replaces the v1 <table class="library">

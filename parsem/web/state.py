@@ -31,6 +31,7 @@ from parsem.store.documents import (
 )
 from parsem.store.events import EventLog
 from parsem.store.projections_cache import (
+    get_notes_for_document,
     get_ratings_for_document,
     initial_reader_positions,
     load_pins_for_document,
@@ -60,6 +61,11 @@ class ReaderState:
     # mutate this dict alongside the event log so the next render
     # has the new state without re-querying the DB.
     chunk_ratings: dict[int, int] = field(default_factory=dict)
+    # position → latest note text. Empty for chunks with no note.
+    # Caller seeds via get_notes_for_document; /note mutates this dict
+    # alongside the event log so the next render has the new state
+    # without re-querying the DB. Mirrors chunk_ratings (notes-export).
+    chunk_notes: dict[int, str] = field(default_factory=dict)
     # Free Mode (Parsem-ci5): browse all chunks, suspend the bucket
     # valve, and never advance high_water. Session-scoped — reset to
     # False on every GET /documents/{id}/reader.
@@ -102,6 +108,7 @@ def build_reader_state_for_document(
         bucket_config=BucketConfig(),
         pin_colors=load_pins_for_document(conn, document_id),
         chunk_ratings=get_ratings_for_document(conn, document_id),
+        chunk_notes=get_notes_for_document(conn, document_id),
         document_id=document_id,
         current_position=current,
         high_water_position=high_water,

@@ -266,6 +266,8 @@ def build_reader_context(state: ReaderState) -> dict[str, Any]:
         "pin_colors": state.pin_colors,
         "chunk_ratings": state.chunk_ratings,
         "current_chunk_rating": state.chunk_ratings.get(state.current_position),
+        "chunk_notes": state.chunk_notes,
+        "current_chunk_note": state.chunk_notes.get(state.current_position),
         "title": document_title(state.chunks),
         "progress_current": progress_current,
         "progress_total": progress_total,

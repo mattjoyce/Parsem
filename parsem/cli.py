@@ -107,6 +107,7 @@ def build_app(
         ingest_settings=settings.ingest if settings else None,
         presentation_settings=settings.presentation if settings else None,
         ductile_settings=settings.ductile if settings else None,
+        notes_dir=resolved_paths.notes_dir,
     )
 
 

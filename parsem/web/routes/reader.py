@@ -6,16 +6,17 @@ domain helpers. No bucket math, no chunking, no business rules in here.
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from parsem.domain.economy import cycle_pin, try_reveal
+from parsem.notes_export import note_file_name, write_notes_file
 from parsem.store.documents import load_document
 from parsem.web.state import ReaderState, build_reader_state_for_document
-from parsem.web.view import build_reader_context
+from parsem.web.view import build_reader_context, document_title
 
 # Spec §20: resume.warm_chunks default. Mirrored here so the GET
 # handler can swap in a freshly-loaded ReaderState without depending
@@ -41,6 +42,11 @@ class SetCurrentPositionBody(BaseModel):
     position: int
 
 
+class NoteBody(BaseModel):
+    # Empty / whitespace-only text clears the note on the current chunk.
+    text: str
+
+
 router = APIRouter()
 
 
@@ -48,9 +54,27 @@ def _state(request: Request) -> ReaderState:
     return request.app.state.reader
 
 
+def _note_file_href(request: Request, state: ReaderState) -> str | None:
+    """`file://` URL the reader surfaces so a click opens the document's
+    exported notes file (notes-export, reader→file half of the deep
+    link). None when export is disabled or the document has no notes —
+    the link only appears once there's a file to open."""
+    notes_dir = getattr(request.app.state, "notes_dir", None)
+    if notes_dir is None or not state.chunk_notes:
+        return None
+    name = note_file_name(state.document_id, document_title(state.chunks))
+    return (notes_dir / name).resolve().as_uri()
+
+
+def _reader_context(request: Request, state: ReaderState) -> dict[str, Any]:
+    context = build_reader_context(state)
+    context["note_file_href"] = _note_file_href(request, state)
+    return context
+
+
 def _render_full(request: Request, state: ReaderState) -> HTMLResponse:
     templates = request.app.state.templates
-    context = build_reader_context(state)
+    context = _reader_context(request, state)
     # The no-FOUC bootstrap + "Aa" panel are page-level (live in
     # reader.html, outside the #reader-main partial), so only the full
     # render needs the presentation defaults — claude-rdk, spec §15.3.
@@ -60,7 +84,9 @@ def _render_full(request: Request, state: ReaderState) -> HTMLResponse:
 
 def _render_partial(request: Request, state: ReaderState) -> HTMLResponse:
     templates = request.app.state.templates
-    return templates.TemplateResponse(request, "_reader_main.html", build_reader_context(state))
+    return templates.TemplateResponse(
+        request, "_reader_main.html", _reader_context(request, state)
+    )
 
 
 @router.get("/documents/{document_id}/reader", response_class=HTMLResponse)
@@ -316,6 +342,70 @@ def post_unrate(request: Request) -> HTMLResponse:
     )
     del state.chunk_ratings[chunk_id]
     return _render_partial(request, state)
+
+
+def _export_document_notes(request: Request, state: ReaderState) -> str | None:
+    """Rewrite the document's notes file from the live note set
+    (notes-export). Best-effort: a write failure (e.g. an unmounted
+    vault path) must NOT fail the note save — the note is already in the
+    event log + projection, which are the source of truth. Returns
+    "failed" so the caller can flag it via a response header; None on
+    success or when export is disabled (no notes_dir configured)."""
+    notes_dir = getattr(request.app.state, "notes_dir", None)
+    if notes_dir is None:
+        return None
+    reader_url = str(
+        request.url_for("get_document_reader", document_id=state.document_id)
+    )
+    try:
+        write_notes_file(
+            notes_dir=notes_dir,
+            document_id=state.document_id,
+            title=document_title(state.chunks),
+            reader_url=reader_url,
+            notes=state.chunk_notes,
+            chunks=state.chunks,
+        )
+    except OSError:
+        return "failed"
+    return None
+
+
+@router.post("/note", response_class=HTMLResponse)
+def post_note(request: Request, body: NoteBody) -> HTMLResponse:
+    """Set or clear the current chunk's note, then rewrite the
+    document's exported notes file (notes-export).
+
+    A non-empty body sets/overwrites the note (`note_set`); an emptied
+    editor clears it (`note_clear`), with a stale-DOM no-op guard mirror-
+    ing /unrate. Notes are frontier-gated like pins/ratings — free-mode
+    chunks past high_water are view-only (422). The export side effect is
+    best-effort: it never fails the save (see `_export_document_notes`)."""
+    state = _state(request)
+    _reject_past_frontier(state)
+    chunk_id = state.current_position
+    now = state.clock()
+    text = body.text.strip()
+    if text:
+        state.event_log.note_set(
+            document_id=state.document_id,
+            chunk_id=chunk_id,
+            note=text,
+            created_at=now,
+        )
+        state.chunk_notes[chunk_id] = text
+    elif chunk_id in state.chunk_notes:
+        state.event_log.note_clear(
+            document_id=state.document_id,
+            chunk_id=chunk_id,
+            created_at=now,
+        )
+        del state.chunk_notes[chunk_id]
+    export_status = _export_document_notes(request, state)
+    response = _render_partial(request, state)
+    if export_status == "failed":
+        response.headers["X-Note-Export"] = "failed"
+    return response
 
 
 @router.post("/conceal", response_class=HTMLResponse)

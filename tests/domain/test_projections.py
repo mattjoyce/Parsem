@@ -273,8 +273,10 @@ def test_projections_module_does_not_import_from_web_or_store_internals() -> Non
         "ReadingEvent",
         "RateEffortPayload",
         "PinSetPayload",
+        "NoteSetPayload",
         "rate_effort_rating",
         "pin_set_color",
+        "note_set_text",
     }
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:

@@ -30,6 +30,13 @@
       <span class="dot dot--{{ cls }}" style="--delay: {{ delay }}s" aria-hidden="true">●</span>
       {% endfor %}
     </div>
+    {# "Notes ↗" — opens this document's exported notes file (notes-export,
+       reader→file deep link). Slot always rendered (mirrors the free-badge)
+       so the first saved note never reflows the bar; visibility:hidden via
+       --empty until a note exists. #}
+    <a class="top-bar__notes{% if not note_file_href %} top-bar__notes--empty{% endif %}"
+       {% if note_file_href %}href="{{ note_file_href }}"{% endif %}
+       title="Open this document's exported notes file">Notes&nbsp;&#8599;</a>
     {% include "_prefs_trigger.html" %}{# "Aa" — peer of the token dots #}
     {% include "_shortcuts_trigger.html" %}{# "?" keycap — keyboard cheatsheet #}
   </header>
@@ -88,7 +95,20 @@
           the chunk has a rating; otherwise nothing. #}{% if entry.chunk.position in chunk_ratings %}<div
             class="rating-bar rating-bar--{{ chunk_ratings[entry.chunk.position] }}"
             aria-hidden="true"
-          ></div>{% endif %}</article>
+          ></div>{% endif %}{# Saved note (notes-export) — margin annotation
+          beneath the chunk. Rendered for any chunk that has one;
+          clicking it on the current chunk reopens the editor (JS). #}{% if entry.chunk.position in chunk_notes %}<div
+            class="chunk-note" aria-label="Your note"
+          >{{ chunk_notes[entry.chunk.position] }}</div>{% endif %}{# Note editor — current chunk only; revealed by the `n`
+          key (JS toggles [hidden]). Prefilled with the existing note so
+          `n` edits in place. Enter saves, Shift+Enter newline, Esc
+          cancels (POST /note). #}{% if entry.chunk.position == current_position %}<form
+            class="note-editor" hidden aria-label="Note editor"
+          ><textarea class="note-editor__text" rows="3"
+            placeholder="Write a note — Enter saves, Shift+Enter newline, Esc cancels"
+          >{{ current_chunk_note or '' }}</textarea><div class="note-editor__actions"
+          ><button type="button" class="note-save">Save</button><button
+            type="button" class="note-cancel">Cancel</button></div></form>{% endif %}</article>
         {% endfor %}
         {% if next_chunk %}
         {# Preview always sits at the bottom of the column — it shows

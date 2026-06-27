@@ -39,6 +39,7 @@ def create_app(
     ingest_settings: IngestSettings | None = None,
     presentation_settings: PresentationSettings | None = None,
     ductile_settings: DuctileSettings | None = None,
+    notes_dir: Path | None = None,
 ) -> FastAPI:
     """Build the FastAPI app wired to a ReaderState plus the SQLite
     connection and the on-disk paths. Callers (CLI + tests) own
@@ -62,6 +63,12 @@ def create_app(
     app.state.originals_dir = originals_dir
     app.state.inbound_raw_dir = raw_dir
     app.state.inbound_converted_dir = converted_dir
+    # Notes-export destination (notes-export). None disables on-disk
+    # export — the note still persists to the event log + projection;
+    # only the markdown file + its open-link are skipped. Defaults to
+    # originals' sibling `notes/` so a paths-only build (tests that don't
+    # pass notes_dir) still has a sane writable location.
+    app.state.notes_dir = notes_dir or originals_dir.parent / "notes"
     app.state.ingest_callback_token = (
         ingest_settings.callback_token if ingest_settings else ""
     )

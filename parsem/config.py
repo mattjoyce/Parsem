@@ -61,6 +61,9 @@ paths:
   data: ${PARSEM_DATA_DIR:-./data}
   # Where the document library lives (originals + inbound dirs).
   library: ${PARSEM_LIBRARY_DIR:-./data/library}
+  # Where reader notes are exported (one markdown file per document).
+  # Point this at an Obsidian vault folder to have notes land there.
+  notes: ${PARSEM_NOTES_DIR:-./data/library/notes}
 
 server:
   host: ${PARSEM_HOST:-127.0.0.1}
@@ -116,10 +119,24 @@ presentation:
 class Paths:
     data_dir: Path
     library_dir: Path
+    # Where reader notes are exported (one markdown file per document).
+    # None means "derive from library_dir" (the default below); set it
+    # via `paths.notes` in the config to point at, e.g., an Obsidian
+    # vault folder. Kept as an override field so existing two-arg Paths
+    # construction (resolve_paths, tests) stays valid.
+    notes_override: Path | None = None
 
     @property
     def db_path(self) -> Path:
         return self.data_dir / "parsem.db"
+
+    @property
+    def notes_dir(self) -> Path:
+        """Resolved notes-export directory: the configured override, or
+        `library/notes` when unset."""
+        if self.notes_override is not None:
+            return self.notes_override
+        return self.library_dir / "notes"
 
     @property
     def originals_dir(self) -> Path:
@@ -292,8 +309,16 @@ def _settings_from_dict(raw: dict[str, Any]) -> Settings:
     library_dir = Path(
         get(raw, "paths.library", "./data/library")
     ).expanduser().resolve()
+    notes_raw = get(raw, "paths.notes", None)
+    notes_override = (
+        Path(notes_raw).expanduser().resolve() if notes_raw else None
+    )
     return Settings(
-        paths=Paths(data_dir=data_dir, library_dir=library_dir),
+        paths=Paths(
+            data_dir=data_dir,
+            library_dir=library_dir,
+            notes_override=notes_override,
+        ),
         server=ServerSettings(
             host=str(get(raw, "server.host", "127.0.0.1")),
             port=int(get(raw, "server.port", 8000)),
@@ -357,6 +382,7 @@ def ensure_library_layout(paths: Paths) -> None:
     paths.originals_dir.mkdir(parents=True, exist_ok=True)
     paths.inbound_raw_dir.mkdir(parents=True, exist_ok=True)
     paths.inbound_converted_dir.mkdir(parents=True, exist_ok=True)
+    paths.notes_dir.mkdir(parents=True, exist_ok=True)
 
 
 # Back-compat shim: callers that used the env-var-only `resolve_paths`

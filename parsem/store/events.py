@@ -33,6 +33,8 @@ EventType = Literal[
     "rate_clear",
     "pin_set",
     "pin_clear",
+    "note_set",
+    "note_clear",
     "open_document",
     "close_document",
 ]
@@ -46,7 +48,11 @@ class PinSetPayload(TypedDict):
     color_id: int
 
 
-EventPayload = RateEffortPayload | PinSetPayload | None
+class NoteSetPayload(TypedDict):
+    note: str
+
+
+EventPayload = RateEffortPayload | PinSetPayload | NoteSetPayload | None
 
 
 @dataclass(frozen=True)
@@ -122,6 +128,26 @@ class EventLog:
         self, *, document_id: int, chunk_id: int, created_at: datetime
     ) -> ReadingEvent:
         return self._append("pin_clear", document_id, chunk_id, None, created_at)
+
+    def note_set(
+        self, *, document_id: int, chunk_id: int, note: str, created_at: datetime
+    ) -> ReadingEvent:
+        """Attach (or overwrite) the reader's note on a chunk. Mirrors
+        `rate_effort` — the projection upserts the chunk_notes row;
+        replay reproduces the latest note. Empty/whitespace text is a
+        caller error: the route maps an emptied editor to `note_clear`."""
+        if not note.strip():
+            raise ValueError("note text must be non-empty; use note_clear to wipe")
+        payload: NoteSetPayload = {"note": note}
+        return self._append("note_set", document_id, chunk_id, payload, created_at)
+
+    def note_clear(
+        self, *, document_id: int, chunk_id: int, created_at: datetime
+    ) -> ReadingEvent:
+        """Wipe the note on a chunk. Mirrors `rate_clear` — the
+        projection deletes the chunk_notes row; replay reproduces the
+        wiped state."""
+        return self._append("note_clear", document_id, chunk_id, None, created_at)
 
     def open_document(self, *, document_id: int, created_at: datetime) -> ReadingEvent:
         return self._append("open_document", document_id, None, None, created_at)
@@ -200,6 +226,14 @@ def pin_set_color(event: ReadingEvent) -> int | None:
     if event.event_type != "pin_set":
         return None
     return cast(PinSetPayload, event.payload)["color_id"]
+
+
+def note_set_text(event: ReadingEvent) -> str | None:
+    """Same pattern as `pin_set_color`: returns the note text from a
+    `note_set` event's payload, or None for any other event type."""
+    if event.event_type != "note_set":
+        return None
+    return cast(NoteSetPayload, event.payload)["note"]
 
 
 def _row_to_event(row: sqlite3.Row) -> ReadingEvent:

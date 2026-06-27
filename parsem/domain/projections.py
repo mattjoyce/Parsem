@@ -19,7 +19,12 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from functools import reduce
 
-from parsem.store.events import ReadingEvent, pin_set_color, rate_effort_rating
+from parsem.store.events import (
+    ReadingEvent,
+    note_set_text,
+    pin_set_color,
+    rate_effort_rating,
+)
 
 
 @dataclass(frozen=True)
@@ -150,3 +155,36 @@ def build_pins(
     for one document. Events from other documents are filtered out."""
     scoped = [e for e in events if e.document_id == document_id]
     return reduce(apply_pin_event, scoped, {})
+
+
+# ─── chunk_notes projection (notes-export) ────────────────────────────
+
+
+def apply_note_event(
+    notes: dict[int, str], event: ReadingEvent
+) -> dict[int, str]:
+    """Fold one note event into a position→note-text dict. `note_set`
+    sets/overwrites; `note_clear` removes; everything else is a no-op.
+    Latest-wins via plain dict overwrite — event ids are monotonic."""
+    if event.chunk_id is None:
+        return notes
+    if event.event_type == "note_clear":
+        if event.chunk_id not in notes:
+            return notes
+        next_notes = dict(notes)
+        del next_notes[event.chunk_id]
+        return next_notes
+    note = note_set_text(event)
+    if note is None:
+        return notes
+    return {**notes, event.chunk_id: note}
+
+
+def build_notes(
+    document_id: int, events: list[ReadingEvent]
+) -> dict[int, str]:
+    """Project note_set/note_clear events into a position-keyed note
+    dict for one document. Events from other documents are filtered
+    out — symmetry with build_pins / build_chunk_ratings."""
+    scoped = [e for e in events if e.document_id == document_id]
+    return reduce(apply_note_event, scoped, {})

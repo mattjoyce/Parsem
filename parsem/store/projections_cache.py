@@ -30,6 +30,7 @@ from parsem.domain.projections import (
     ReadingState,
     apply_event,
     build_chunk_ratings,
+    build_notes,
     build_pins,
     build_reading_state,
     empty_reading_state,
@@ -39,6 +40,7 @@ from parsem.domain.reanchor import best_chunk_by_jaccard
 from parsem.store.events import (
     EventLog,
     ReadingEvent,
+    note_set_text,
     pin_set_color,
     rate_effort_rating,
 )
@@ -208,6 +210,83 @@ def _write_chunk_rating(
         "  rating=excluded.rating,"
         "  updated_at=excluded.updated_at",
         (chunk_db_id, rating, datetime.now(UTC).isoformat()),
+    )
+
+
+# ─── chunk_notes projection (notes-export) ────────────────────────────
+
+
+def apply_to_chunk_notes(conn: sqlite3.Connection, event: ReadingEvent) -> None:
+    """Persist one note_set or note_clear event into chunk_notes.
+    Resolves the event's POSITION-keyed chunk_id to the chunks.id row;
+    silently skips if no such chunk exists (drift guard). Does NOT
+    commit — the EventLog hook composer commits after fan-out. Mirrors
+    `apply_to_chunk_ratings`."""
+    if event.chunk_id is None:
+        return
+    if event.event_type == "note_clear":
+        chunk_db_id = _resolve_chunk_id(conn, event.document_id, event.chunk_id)
+        if chunk_db_id is None:
+            return
+        conn.execute("DELETE FROM chunk_notes WHERE chunk_id=?", (chunk_db_id,))
+        return
+    note = note_set_text(event)
+    if note is None:
+        return
+    chunk_db_id = _resolve_chunk_id(conn, event.document_id, event.chunk_id)
+    if chunk_db_id is None:
+        return
+    _write_chunk_note(conn, chunk_db_id, note)
+
+
+def get_notes_for_document(
+    conn: sqlite3.Connection, document_id: int
+) -> dict[int, str]:
+    """Return the persisted notes for a document as a position→note
+    dict (UI lives in position space; chunk_notes is keyed on chunks.id,
+    so we JOIN to translate). Empty dict if no notes yet."""
+    rows = conn.execute(
+        "SELECT c.position, n.note"
+        " FROM chunk_notes n"
+        " JOIN chunks c ON c.id = n.chunk_id"
+        " WHERE c.document_id=?",
+        (document_id,),
+    ).fetchall()
+    return {row["position"]: row["note"] for row in rows}
+
+
+def rebuild_chunk_notes(
+    conn: sqlite3.Connection, document_id: int, log: EventLog
+) -> dict[int, str]:
+    """§18.5 recovery: rewrite chunk_notes rows for one document from
+    the full event log. Wipes the document's existing notes first so a
+    rebuild can never leave stale rows behind."""
+    events = log.events_for_document(document_id)
+    notes = build_notes(document_id, events)
+    conn.execute(
+        "DELETE FROM chunk_notes"
+        " WHERE chunk_id IN (SELECT id FROM chunks WHERE document_id=?)",
+        (document_id,),
+    )
+    for position, note in notes.items():
+        chunk_db_id = _resolve_chunk_id(conn, document_id, position)
+        if chunk_db_id is None:
+            continue
+        _write_chunk_note(conn, chunk_db_id, note)
+    conn.commit()
+    return notes
+
+
+def _write_chunk_note(
+    conn: sqlite3.Connection, chunk_db_id: int, note: str
+) -> None:
+    conn.execute(
+        "INSERT INTO chunk_notes (chunk_id, note, updated_at)"
+        " VALUES (?, ?, ?)"
+        " ON CONFLICT(chunk_id) DO UPDATE SET"
+        "  note=excluded.note,"
+        "  updated_at=excluded.updated_at",
+        (chunk_db_id, note, datetime.now(UTC).isoformat()),
     )
 
 
@@ -420,6 +499,7 @@ def make_event_log(conn: sqlite3.Connection) -> EventLog:
         apply_to_reading_state(conn, event)
         apply_to_chunk_ratings(conn, event)
         apply_to_pins(conn, event)
+        apply_to_chunk_notes(conn, event)
         conn.commit()
 
     return EventLog(conn, on_event=_on_event)

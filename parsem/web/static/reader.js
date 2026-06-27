@@ -253,6 +253,76 @@
     if (settle) settleAtCurrent({ behavior: "smooth" });
   }
 
+  // ─── Reader notes (notes-export) ───────────────────────────────────
+  // `n` opens the current chunk's gutter editor; Enter saves, Esc
+  // cancels. Save POSTs /note and applies the returned fragment, which
+  // re-renders the saved note beneath the chunk and reveals the top-bar
+  // "Notes ↗" link. The editor is a typing target, so the global
+  // keydown handler ignores keys while it's focused — Enter/Esc are
+  // handled by the dedicated capture-phase listener below.
+  function openNoteEditor() {
+    const cc = currentChunk();
+    const editor = cc && cc.querySelector(".note-editor");
+    if (!editor) return;
+    editor.hidden = false;
+    cc.classList.add("chunk--noting");
+    const ta = editor.querySelector(".note-editor__text");
+    if (ta) {
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    }
+  }
+
+  function closeNoteEditor(editor) {
+    if (!editor) return;
+    editor.hidden = true;
+    const chunk = editor.closest(".chunk");
+    if (chunk) chunk.classList.remove("chunk--noting");
+  }
+
+  // Dedicated save path (not performAction) so we can read the
+  // X-Note-Export header — the export is best-effort server-side, so a
+  // failed file write still saves the note; we just warn. settle is
+  // skipped: applyResponseFragment preserves the anchor, and yanking the
+  // viewport right after typing reads as a jolt.
+  async function saveNote(text) {
+    const response = await fetch("/note", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) return;
+    if (response.headers.get("X-Note-Export") === "failed") {
+      console.warn(
+        "Parsem: note saved, but the notes file could not be written (check paths.notes).",
+      );
+    }
+    applyResponseFragment(await response.text());
+  }
+
+  // Enter/Esc inside the editor. Capture phase + stopImmediatePropagation
+  // so neither reader_pins.js nor the global handler also react.
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      const editor =
+        event.target.closest && event.target.closest(".note-editor");
+      if (!editor) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        closeNoteEditor(editor);
+        settleAtCurrent({ behavior: "smooth" });
+      } else if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const ta = editor.querySelector(".note-editor__text");
+        saveNote(ta ? ta.value : "");
+      }
+    },
+    true,
+  );
+
   // Keyboard dispatch — return-first guards every action key (§8.1).
   // When the reader has scrolled away from the canonical anchor, the
   // first key press re-anchors and bows out; the second press hits a
@@ -339,6 +409,15 @@
       return;
     }
 
+    // `n` opens the note editor on the current chunk (notes-export). A
+    // UI affordance, not a state mutation — no return-first guard; the
+    // textarea focus scrolls the editor into view.
+    if (event.key === "n" || event.key === "N") {
+      event.preventDefault();
+      openNoteEditor();
+      return;
+    }
+
     if (event.key >= "1" && event.key <= "5") {
       const action = ratingActionForKey(event.key);
       if (action) {
@@ -370,6 +449,29 @@
     mouseDownT = Date.now();
   });
   document.addEventListener("click", (event) => {
+    // Note editor Save / Cancel and reopen-from-saved-note (notes-export).
+    // Handled first so the chunk-body click logic below never fires on them.
+    const noteSave = event.target.closest(".note-save");
+    if (noteSave) {
+      event.preventDefault();
+      const editor = noteSave.closest(".note-editor");
+      const ta = editor && editor.querySelector(".note-editor__text");
+      saveNote(ta ? ta.value : "");
+      return;
+    }
+    const noteCancel = event.target.closest(".note-cancel");
+    if (noteCancel) {
+      event.preventDefault();
+      closeNoteEditor(noteCancel.closest(".note-editor"));
+      settleAtCurrent({ behavior: "smooth" });
+      return;
+    }
+    const noteDisplay = event.target.closest(".chunk-note");
+    if (noteDisplay && noteDisplay.closest(".chunk--current")) {
+      event.preventDefault();
+      openNoteEditor();
+      return;
+    }
     // Per-chunk action glyph click (claude-jvs.3) — copy-link only.
     // Native browser select-and-copy handles chunk content; no
     // separate copy-text affordance. stopPropagation keeps the

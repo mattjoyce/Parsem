@@ -282,8 +282,30 @@ CREATE TABLE document_tags (
 CREATE INDEX idx_document_tags_tag ON document_tags(tag);
 """
 
+# v6 — reader notes (bd notes-export). A chunk-anchored note projection,
+# the textual sibling of chunk_ratings: one note per chunk, keyed on
+# chunks.id, latest-wins via note_set / note_clear events. Cascade on
+# chunks wipes a chunk's note when the document (or a re-chunk) drops it,
+# exactly like chunk_ratings. The position→chunks.id translation lives in
+# projections_cache.get_notes_for_document, mirroring the ratings path.
+SCHEMA_V6 = """
+CREATE TABLE chunk_notes (
+    chunk_id INTEGER PRIMARY KEY,
+    note TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY(chunk_id) REFERENCES chunks(id) ON DELETE CASCADE
+);
+"""
+
 # Forward-only migration list. Index = (version - 1). Append, never edit.
-MIGRATIONS: list[str] = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5]
+MIGRATIONS: list[str] = [
+    SCHEMA_V1,
+    SCHEMA_V2,
+    SCHEMA_V3,
+    SCHEMA_V4,
+    SCHEMA_V5,
+    SCHEMA_V6,
+]
 
 
 def connect(path: str | Path = ":memory:") -> sqlite3.Connection:
