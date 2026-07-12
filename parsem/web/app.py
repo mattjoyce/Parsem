@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from parsem.config import DuctileSettings, IngestSettings, PresentationSettings
+from parsem.web.db_session import build_provider
 from parsem.web.routes.arrivals import router as arrivals_router
 from parsem.web.routes.assets import router as assets_router
 from parsem.web.routes.ingest import router as ingest_router
@@ -33,6 +34,7 @@ def create_app(
     state: ReaderState,
     *,
     db: sqlite3.Connection,
+    db_path: str | Path | None = None,
     originals_dir: Path,
     inbound_raw_dir: Path | None = None,
     inbound_converted_dir: Path | None = None,
@@ -45,6 +47,14 @@ def create_app(
     connection and the on-disk paths. Callers (CLI + tests) own
     directory creation via `parsem.config.ensure_library_layout`;
     this factory assumes the contract is in place.
+
+    `db` is the durable connection: it seeds/migrates at startup and
+    backs the reader's single-session `EventLog`. `db_path`, when a real
+    file path is supplied (production), switches the *stateless* routes
+    (ingest, arrivals, library, assets) onto a fresh connection per
+    request via `parsem.web.db_session` — the fix for concurrent-ingest
+    corruption. Omitting `db_path` (tests / `:memory:`) keeps every
+    request on the shared `db`, so the suite is unaffected.
 
     `presentation_settings` supplies the reader's no-localStorage
     appearance defaults (spec §15.3, claude-rdk); when omitted the
@@ -59,7 +69,11 @@ def create_app(
 
     app = FastAPI(title="Parsem", docs_url=None, redoc_url=None)
     app.state.reader = state
+    # Durable connection — reader session + startup seed/migrate.
     app.state.db = db
+    # Stateless routes acquire connections through this provider: fresh
+    # per-request for a real file path, shared otherwise (db_session).
+    app.state.db_provider = build_provider(db, db_path)
     app.state.originals_dir = originals_dir
     app.state.inbound_raw_dir = raw_dir
     app.state.inbound_converted_dir = converted_dir

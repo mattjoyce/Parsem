@@ -32,13 +32,14 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from parsem.ingest.arrivals import process_raw_arrival
 from parsem.ingest.paths import unique_inbound_path
 from parsem.ingest.url_submit import UrlSubmitError, submit_url
+from parsem.web.db_session import DbConn
 
 router = APIRouter()
 
 
 @router.post("/ingest", response_model=None)
 async def post_ingest(
-    request: Request, file: UploadFile | None = None
+    request: Request, conn: DbConn, file: UploadFile | None = None
 ) -> RedirectResponse | JSONResponse:
     """Form-file upload only. The legacy JSON `{url}` branch was
     retired in favour of `/ingest/url` (bd claude-5fp); JSON callers
@@ -66,14 +67,14 @@ async def post_ingest(
     if target.suffix.lower() == ".md":
         process_raw_arrival(
             target,
-            conn=request.app.state.db,
+            conn=conn,
             originals_dir=request.app.state.originals_dir,
         )
     return RedirectResponse(url="/library", status_code=302)
 
 
 @router.post("/ingest/url")
-async def post_ingest_url(request: Request) -> JSONResponse:
+async def post_ingest_url(request: Request, conn: DbConn) -> JSONResponse:
     """User-initiated URL submission. Inserts a `converting` row, then
     calls ductile's firecrawl plugin. Returns 202 with the new
     document_id on success; 400 on bad input; 502 on ductile failure.
@@ -92,7 +93,7 @@ async def post_ingest_url(request: Request) -> JSONResponse:
     try:
         result = submit_url(
             url,
-            conn=request.app.state.db,
+            conn=conn,
             settings=request.app.state.ductile_settings,
             inbound_converted_dir=request.app.state.inbound_converted_dir,
         )

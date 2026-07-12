@@ -30,6 +30,7 @@ from parsem.ingest.arrivals import (
     process_converted_arrival,
     process_raw_arrival,
 )
+from parsem.web.db_session import DbConn
 
 router = APIRouter()
 
@@ -57,16 +58,23 @@ def _check_token(request: Request) -> None:
 
 @router.post("/ingest/raw-arrived")
 def post_raw_arrived(
-    request: Request, body: ArrivalBody, _: None = Depends(_check_token)
+    request: Request,
+    body: ArrivalBody,
+    conn: DbConn,
+    _: None = Depends(_check_token),
 ) -> JSONResponse:
     """Ductile knocks here when something lands in inbound/raw/. The
     response carries the closed action vocabulary (`ingested`,
     `submit_to_docling`, `duplicate`, `unsupported`); the ductile DSL
     branches on it. Path is read from the bind-mounted NAS share —
-    Parsem and ductile must agree on the path namespace."""
+    Parsem and ductile must agree on the path namespace.
+
+    Runs on a per-request connection (`conn`): a batch drop firing many
+    of these concurrently is exactly what corrupted a shared connection
+    (bd Parsem-7wu.5 follow-up)."""
     result = process_raw_arrival(
         Path(body.path),
-        conn=request.app.state.db,
+        conn=conn,
         originals_dir=request.app.state.originals_dir,
     )
     return JSONResponse(content=asdict(result))
@@ -74,15 +82,19 @@ def post_raw_arrived(
 
 @router.post("/ingest/converted-arrived")
 def post_converted_arrived(
-    request: Request, body: ArrivalBody, _: None = Depends(_check_token)
+    request: Request,
+    body: ArrivalBody,
+    conn: DbConn,
+    _: None = Depends(_check_token),
 ) -> JSONResponse:
     """Ductile knocks here after Marker writes <doc_id>.md into
     inbound/converted/. The atomic-write contract guarantees the .md
     is the LAST artifact to land, so by here the sidecar JSON and any
-    images dir are already in place."""
+    images dir are already in place. Per-request connection — see
+    `post_raw_arrived`."""
     result = process_converted_arrival(
         Path(body.path),
-        conn=request.app.state.db,
+        conn=conn,
         originals_dir=request.app.state.originals_dir,
     )
     return JSONResponse(content=asdict(result))

@@ -315,16 +315,26 @@ def connect(path: str | Path = ":memory:") -> sqlite3.Connection:
     databases — that's a SQLite invariant, not a bug here. File-backed
     paths get true WAL.
 
-    check_same_thread=False because FastAPI's TestClient and uvicorn run
-    request handlers in worker threads while the connection is opened on
-    the main thread. WAL + serialized writes (the sqlite3 module's
-    default) keep this safe for our single-process usage.
+    check_same_thread=False lets a connection built on one thread be used
+    on another (FastAPI dispatches sync handlers to a worker threadpool).
+    This does NOT make a *shared* connection safe under concurrency —
+    sqlite3 serialises individual statements, but not multi-statement
+    sequences or `cur.lastrowid` reads across interleaved requests. A
+    concurrent batch of ingest callbacks on one shared connection
+    corrupted doc ids and collided transactions (see
+    `parsem.web.db_session`). The web layer's fix is a fresh connection
+    per request for the stateless routes; WAL + busy_timeout let those
+    connections coexist. Keep single-connection usage single-threaded.
     """
     conn = sqlite3.connect(str(path), check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")
+    # WAL permits one writer + many readers across connections; a writer
+    # arriving while another holds the write lock gets SQLITE_BUSY. Wait
+    # up to 5s for the lock instead of erroring out immediately.
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 

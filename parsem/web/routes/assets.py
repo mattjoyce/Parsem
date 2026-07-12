@@ -24,17 +24,17 @@ from fastapi.responses import FileResponse
 
 from parsem.ingest import layout
 from parsem.store.documents import load_document
+from parsem.web.db_session import DbConn
 
 router = APIRouter()
 
 
 @router.get("/documents/{document_id}/images/{asset_path:path}")
 def get_document_image(
-    document_id: int, asset_path: str, request: Request
+    document_id: int, asset_path: str, request: Request, conn: DbConn
 ) -> FileResponse:
     """Serve `originals/<doc_id>/images/<asset_path>`. 404 on unknown
     document, traversal attempt, or missing file."""
-    conn = request.app.state.db
     if load_document(conn, document_id) is None:
         raise HTTPException(status_code=404, detail="Document not found")
 

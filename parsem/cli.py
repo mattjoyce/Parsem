@@ -101,6 +101,9 @@ def build_app(
     return create_app(
         state,
         db=conn,
+        # Real file path → stateless routes use a fresh connection per
+        # request (concurrent-ingest fix; parsem.web.db_session).
+        db_path=resolved_paths.db_path,
         originals_dir=resolved_paths.originals_dir,
         inbound_raw_dir=resolved_paths.inbound_raw_dir,
         inbound_converted_dir=resolved_paths.inbound_converted_dir,
