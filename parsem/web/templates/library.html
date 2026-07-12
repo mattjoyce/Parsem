@@ -32,33 +32,57 @@
     </form>
   </section>
 
-  {# Control strip — segments + sort (ADR 0005, bd Parsem-7wu.4).
-     Segments are exclusive; default = in_progress. Sort is independent
-     of the segment; default = last_opened. State persists via URL
-     query params (authoritative) + localStorage fallback. The tag-
-     chip row lands in Parsem-7wu.5 alongside tag CRUD endpoints. #}
+  {# Control strip — segments + sort + select toggle (ADR 0005, bd
+     Parsem-7wu.4). Segments are exclusive; default = in_progress. Sort
+     is independent of the segment; default = last_opened. State
+     persists via URL query params (authoritative) + localStorage
+     fallback. The tag-chip filter row is the sibling <nav> below
+     (Parsem-7wu.5). #}
   <nav class="library-strip" aria-label="Library filters">
     <ul class="library-segments" role="tablist">
       {% for slug, label in [('all', 'All'), ('unread', 'Unread'), ('in_progress', 'In progress'), ('finished', 'Finished')] %}
       <li role="presentation">
         <a class="library-segment{% if slug == current_segment %} library-segment--active{% endif %}"
-           href="/library?segment={{ slug }}&sort={{ current_sort }}"
+           href="{{ strip_href(slug, current_sort, active_tags) }}"
            role="tab"
            aria-selected="{{ 'true' if slug == current_segment else 'false' }}"
            data-segment="{{ slug }}">{{ label }}</a>
       </li>
       {% endfor %}
     </ul>
-    <label class="library-sort">
-      <span class="library-sort__label">Sort</span>
-      <select class="library-sort__select" data-current-sort="{{ current_sort }}">
-        <option value="last_opened"{% if current_sort == 'last_opened' %} selected{% endif %}>Last opened</option>
-        <option value="recently_added"{% if current_sort == 'recently_added' %} selected{% endif %}>Recently added</option>
-        <option value="title_az"{% if current_sort == 'title_az' %} selected{% endif %}>Title A–Z</option>
-        <option value="longest"{% if current_sort == 'longest' %} selected{% endif %}>Longest</option>
-      </select>
-    </label>
+    <div class="library-strip__right">
+      {% if rows or active_tags %}
+      <button type="button" class="library-select-toggle" aria-pressed="false"
+              data-label-select="Select" data-label-done="Done">Select</button>
+      {% endif %}
+      <label class="library-sort">
+        <span class="library-sort__label">Sort</span>
+        <select class="library-sort__select" data-current-sort="{{ current_sort }}">
+          <option value="last_opened"{% if current_sort == 'last_opened' %} selected{% endif %}>Last opened</option>
+          <option value="recently_added"{% if current_sort == 'recently_added' %} selected{% endif %}>Recently added</option>
+          <option value="title_az"{% if current_sort == 'title_az' %} selected{% endif %}>Title A–Z</option>
+          <option value="longest"{% if current_sort == 'longest' %} selected{% endif %}>Longest</option>
+        </select>
+      </label>
+    </div>
   </nav>
+
+  {# Tag-chip filter row (ADR 0005, bd Parsem-7wu.5). Each chip toggles
+     its tag in/out of the URL `tag` params; the route recomputes the
+     hrefs so the template stays dumb. Multi-select is OR ("any of
+     these tags"). Only rendered when the library has ≥1 tag. #}
+  {% if tag_chips %}
+  <nav class="library-chips" aria-label="Filter by tag">
+    {% for chip in tag_chips %}
+    <a class="library-chip{% if chip.active %} library-chip--active{% endif %}"
+       href="{{ chip.href }}"
+       aria-pressed="{{ 'true' if chip.active else 'false' }}">#{{ chip.tag }}</a>
+    {% endfor %}
+    {% if active_tags %}
+    <a class="library-chip library-chip--clear" href="{{ strip_href(current_segment, current_sort, []) }}">Clear</a>
+    {% endif %}
+  </nav>
+  {% endif %}
 
   {% if rows %}
   {# 3 columns desktop / 2 narrow / 1 mobile via CSS Grid auto-fill.
@@ -70,17 +94,43 @@
       {% include "_library_tile.html" %}
     {% endfor %}
   </section>
+  {% elif active_tags %}
+  <p class="library-empty">
+    No documents match {% for t in active_tags %}<code>#{{ t }}</code>{% if not loop.last %}, {% endif %}{% endfor %} in this view —
+    <a href="{{ strip_href('all', current_sort, []) }}">clear filters</a>.
+  </p>
   {% elif current_segment != 'all' %}
   <p class="library-empty">
     No documents in this view —
-    <a href="/library?segment=all&sort={{ current_sort }}">show all</a>.
+    <a href="{{ strip_href('all', current_sort, []) }}">show all</a>.
   </p>
   {% else %}
   <p class="library-empty">
     No documents yet — drop a .md file or paste a URL above to begin.
   </p>
   {% endif %}
+
+  <footer class="library-footer">
+    <span class="library-footer__version">Parsem v{{ parsem_version }}</span>
+  </footer>
 </main>
+
+{# Batch action bar (ADR 0005, bd Parsem-7wu.5). Fixed to the viewport
+   bottom; revealed by library.js while in select mode with ≥1 tile
+   checked. Actions POST /documents/batch with the checked id set. #}
+<div class="library-batchbar" hidden role="toolbar" aria-label="Bulk actions">
+  <span class="library-batchbar__count"><span data-batch-count>0</span> selected</span>
+  <div class="library-batchbar__group">
+    <input type="text" class="library-batchbar__tag" placeholder="tag…"
+           maxlength="32" aria-label="Tag to apply or remove">
+    <button type="button" class="library-batchbar__btn" data-batch-action="tag">Tag</button>
+    <button type="button" class="library-batchbar__btn" data-batch-action="untag">Untag</button>
+  </div>
+  <div class="library-batchbar__group">
+    <button type="button" class="library-batchbar__btn" data-batch-action="rechunk">Re-chunk</button>
+    <button type="button" class="library-batchbar__btn library-batchbar__btn--delete" data-batch-action="delete">Delete</button>
+  </div>
+</div>
 
 {# Shared backdrop scrim (one element regardless of doc count); the JS
    toggles [hidden] when any drawer opens. Click → close the open

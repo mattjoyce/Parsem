@@ -18,6 +18,12 @@
          role="button"
          aria-label="Open details for {{ doc.title }}"
          title="{{ doc.title }}">
+  {# Selection checkbox — invisible until the library enters select
+     mode (body.library--selecting). library.js toggles `checked` +
+     the tile's .is-selected class on click; the batch bar reads
+     :checked to gather the id set (bd Parsem-7wu.5). #}
+  <input type="checkbox" class="library-tile__checkbox" value="{{ doc.id }}"
+         tabindex="-1" aria-label="Select {{ doc.title }}">
   <h2 class="library-tile__title">
     <span class="library-tile__title-text">{{ doc.title }}</span>
   </h2>

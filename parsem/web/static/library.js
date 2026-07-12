@@ -263,4 +263,188 @@
       }
     });
   }
+
+  // === Select mode + bulk actions ====================================
+  //
+  // ADR 0005, bd Parsem-7wu.5. "Select" toggles body.library--selecting;
+  // in that mode a tile click toggles selection (never opens the drawer),
+  // and the fixed batch bar reveals when ≥1 tile is checked. Each action
+  // POSTs /documents/batch with the checked id set; the page reloads to
+  // reflect the new state (preserving the current segment/sort/tag URL).
+
+  const selectToggle = document.querySelector(".library-select-toggle");
+  const batchBar = document.querySelector(".library-batchbar");
+
+  function isSelecting() {
+    return document.body.classList.contains("library--selecting");
+  }
+
+  function selectedIds() {
+    return Array.from(
+      document.querySelectorAll(".library-tile__checkbox:checked"),
+    )
+      .map((cb) => parseInt(cb.value, 10))
+      .filter((n) => Number.isInteger(n));
+  }
+
+  function updateBatchBar() {
+    if (!batchBar) return;
+    const ids = selectedIds();
+    const countEl = batchBar.querySelector("[data-batch-count]");
+    if (countEl) countEl.textContent = String(ids.length);
+    batchBar.hidden = !(isSelecting() && ids.length > 0);
+  }
+
+  function toggleTile(tile) {
+    const cb = tile.querySelector(".library-tile__checkbox");
+    if (!cb) return;
+    cb.checked = !cb.checked;
+    tile.classList.toggle("is-selected", cb.checked);
+    tile.setAttribute("aria-pressed", cb.checked ? "true" : "false");
+    updateBatchBar();
+  }
+
+  function clearSelection() {
+    document
+      .querySelectorAll(".library-tile__checkbox:checked")
+      .forEach((cb) => {
+        cb.checked = false;
+        const tile = cb.closest(".library-tile");
+        if (tile) {
+          tile.classList.remove("is-selected");
+          tile.removeAttribute("aria-pressed");
+        }
+      });
+  }
+
+  function exitSelectMode() {
+    document.body.classList.remove("library--selecting");
+    if (selectToggle) {
+      selectToggle.setAttribute("aria-pressed", "false");
+      selectToggle.textContent =
+        selectToggle.dataset.labelSelect || "Select";
+    }
+    clearSelection();
+    updateBatchBar();
+  }
+
+  if (selectToggle) {
+    selectToggle.addEventListener("click", () => {
+      const on = document.body.classList.toggle("library--selecting");
+      selectToggle.setAttribute("aria-pressed", on ? "true" : "false");
+      selectToggle.textContent = on
+        ? selectToggle.dataset.labelDone || "Done"
+        : selectToggle.dataset.labelSelect || "Select";
+      if (!on) clearSelection();
+      updateBatchBar();
+    });
+  }
+
+  // Capture-phase so this runs before the bubble-phase drawer-open
+  // handler above; in select mode we cancel the event so the tile
+  // toggles selection instead of opening its drawer.
+  document.addEventListener(
+    "click",
+    (ev) => {
+      if (!isSelecting()) return;
+      const tile = ev.target.closest(".library-tile");
+      if (!tile) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      toggleTile(tile);
+    },
+    true,
+  );
+
+  document.addEventListener(
+    "keydown",
+    (ev) => {
+      if (!isSelecting()) return;
+      const tile =
+        ev.target.matches && ev.target.matches(".library-tile")
+          ? ev.target
+          : null;
+      if (tile && (ev.key === "Enter" || ev.key === " ")) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        toggleTile(tile);
+        return;
+      }
+      // Esc leaves select mode when no drawer is open (the drawer owns
+      // Esc while it's visible).
+      if (
+        ev.key === "Escape" &&
+        !document.querySelector(".library-drawer:not([hidden])")
+      ) {
+        ev.preventDefault();
+        exitSelectMode();
+      }
+    },
+    true,
+  );
+
+  if (batchBar) {
+    batchBar.addEventListener("click", async (ev) => {
+      const btn = ev.target.closest("[data-batch-action]");
+      if (!btn) return;
+      const action = btn.dataset.batchAction;
+      const ids = selectedIds();
+      if (!ids.length) return;
+
+      let tag = null;
+      if (action === "tag" || action === "untag") {
+        const input = batchBar.querySelector(".library-batchbar__tag");
+        tag = input ? input.value.trim() : "";
+        if (!tag) {
+          if (input) input.focus();
+          return;
+        }
+      }
+      const noun = `${ids.length} document${ids.length === 1 ? "" : "s"}`;
+      if (
+        action === "delete" &&
+        !confirm(`Delete ${noun}? This cannot be undone.`)
+      ) {
+        return;
+      }
+      if (
+        action === "rechunk" &&
+        !confirm(`Re-chunk ${noun}? Reading positions are preserved.`)
+      ) {
+        return;
+      }
+
+      const buttons = Array.from(batchBar.querySelectorAll("button"));
+      buttons.forEach((b) => (b.disabled = true));
+      try {
+        const r = await fetch("/documents/batch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, document_ids: ids, tag }),
+        });
+        if (!r.ok) {
+          let reason = "request failed";
+          try {
+            const b = await r.json();
+            if (b && b.detail) {
+              reason =
+                typeof b.detail === "string"
+                  ? b.detail
+                  : JSON.stringify(b.detail);
+            }
+          } catch (_) {
+            /* body not JSON — keep generic reason */
+          }
+          alert("Bulk action failed: " + reason);
+          return;
+        }
+        // Reload preserves the current segment/sort/tag query state.
+        window.location.reload();
+      } catch (_err) {
+        alert("Bulk action failed.");
+      } finally {
+        buttons.forEach((b) => (b.disabled = false));
+      }
+    });
+  }
 })();

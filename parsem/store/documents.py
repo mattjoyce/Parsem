@@ -90,9 +90,7 @@ def insert_document(
     return new_id
 
 
-def find_document_id_by_source_hash(
-    conn: sqlite3.Connection, source_hash: str
-) -> int | None:
+def find_document_id_by_source_hash(conn: sqlite3.Connection, source_hash: str) -> int | None:
     """Lookup for the arrivals dedup path (ADR 0002). Returns the
     existing document id when a row already carries this hash, or None
     when this is a first arrival. Hash is the SHA-256 of the
@@ -167,8 +165,7 @@ def insert_chunks_and_sections(
         for s in sections:
             section_id = section_id_by_start[s.start_chunk_position]
             conn.execute(
-                "UPDATE chunks SET section_id=? "
-                "WHERE document_id=? AND position BETWEEN ? AND ?",
+                "UPDATE chunks SET section_id=? WHERE document_id=? AND position BETWEEN ? AND ?",
                 (section_id, document_id, s.start_chunk_position, s.end_chunk_position),
             )
         conn.commit()
@@ -204,8 +201,7 @@ def mark_document_failed(
     """Final state of a failed upload pipeline (spec §17.2):
     `status='failed'` with a human-readable `failure_reason`."""
     conn.execute(
-        "UPDATE documents SET status='failed', failure_reason=?,"
-        " updated_at=? WHERE id=?",
+        "UPDATE documents SET status='failed', failure_reason=?, updated_at=? WHERE id=?",
         (reason, now.isoformat(), document_id),
     )
     conn.commit()
@@ -301,9 +297,7 @@ def compute_silhouette_buckets(
 
     # Bucket assignment per chunk. Same formula for any N — sparse for
     # small docs, dense for large ones.
-    bucket_chunks: list[list[int]] = [
-        [] for _ in range(SILHOUETTE_BUCKET_COUNT)
-    ]
+    bucket_chunks: list[list[int]] = [[] for _ in range(SILHOUETTE_BUCKET_COUNT)]
     for chunk_pos in range(total_chunks):
         bucket_idx = chunk_pos * SILHOUETTE_BUCKET_COUNT // total_chunks
         # Safety clamp — exact arithmetic should always land in range
@@ -318,8 +312,7 @@ def compute_silhouette_buckets(
             continue
 
         ratings_in_bucket: list[int] = [
-            r for pos in chunk_positions
-            if (r := chunk_ratings[pos]) is not None
+            r for pos in chunk_positions if (r := chunk_ratings[pos]) is not None
         ]
         any_settled = any(pos < high_water_position for pos in chunk_positions)
 
@@ -497,17 +490,19 @@ def _document_from_row(row: sqlite3.Row) -> Document:
 # finished computations rely on division and NULLIF returns NULL so
 # those rows fall out cleanly. The 0.95 cutoff matches the lenient
 # 'Finished' rule from the ADR (covers footnotes/appendix).
-_SEGMENT_WHERE: dict[str, str] = {
+# Segment → bare boolean condition (no "WHERE" prefix) so it can be
+# AND-composed with the optional tag filter (bd Parsem-7wu.5). "all"
+# contributes no condition.
+_SEGMENT_COND: dict[str, str] = {
     "all": "",
-    "unread": "WHERE COALESCE(rs.high_water_position, 0) = 0",
+    "unread": "COALESCE(rs.high_water_position, 0) = 0",
     "in_progress": (
-        "WHERE COALESCE(rs.high_water_position, 0) > 0"
+        "COALESCE(rs.high_water_position, 0) > 0"
         " AND (COALESCE(rs.high_water_position, 0) * 1.0"
         "      / NULLIF(d.total_chunks, 0)) < 0.95"
     ),
     "finished": (
-        "WHERE (COALESCE(rs.high_water_position, 0) * 1.0"
-        "       / NULLIF(d.total_chunks, 0)) >= 0.95"
+        "(COALESCE(rs.high_water_position, 0) * 1.0       / NULLIF(d.total_chunks, 0)) >= 0.95"
     ),
 }
 
@@ -516,15 +511,13 @@ _SEGMENT_WHERE: dict[str, str] = {
 # stable `title ASC` tiebreaker so order is deterministic across
 # re-renders (matters for tests + smooth UAT).
 _SORT_ORDER: dict[str, str] = {
-    "last_opened": (
-        "ORDER BY COALESCE(rs.updated_at, d.created_at) DESC, d.title ASC"
-    ),
+    "last_opened": ("ORDER BY COALESCE(rs.updated_at, d.created_at) DESC, d.title ASC"),
     "recently_added": "ORDER BY d.created_at DESC, d.title ASC",
     "title_az": "ORDER BY d.title ASC",
     "longest": "ORDER BY d.total_chunks DESC NULLS LAST, d.title ASC",
 }
 
-VALID_SEGMENTS: frozenset[str] = frozenset(_SEGMENT_WHERE)
+VALID_SEGMENTS: frozenset[str] = frozenset(_SEGMENT_COND)
 VALID_SORTS: frozenset[str] = frozenset(_SORT_ORDER)
 DEFAULT_SEGMENT = "in_progress"
 DEFAULT_SORT = "last_opened"
@@ -535,14 +528,23 @@ def list_library_rows(
     *,
     segment: str = DEFAULT_SEGMENT,
     sort: str = DEFAULT_SORT,
+    tags: list[str] | None = None,
 ) -> list[LibraryRow]:
-    """All documents matching the selected segment + sort, with the
-    full library v2 payload (ADR 0005, bd Parsem-7wu).
+    """All documents matching the selected segment + sort (+ optional
+    tag filter), with the full library v2 payload (ADR 0005, bd
+    Parsem-7wu).
 
     `segment` ∈ VALID_SEGMENTS filters by reading-state bucket.
     `sort` ∈ VALID_SORTS picks the order. Unknown values fall back
     to the defaults silently — the route is expected to validate
     + normalise before calling.
+
+    `tags` (bd Parsem-7wu.5), when non-empty, narrows to documents
+    carrying **any** of the given tags (OR semantics — the chip row is
+    additive). Tag values are matched verbatim against the canonical
+    `document_tags.tag` column, so the caller passes already-normalised
+    values (unknown tags simply match nothing). None/empty → no tag
+    filter.
 
     One LEFT JOIN against reading_state covers progress + high-water
     + last-opened. Two correlated subqueries inline `pin_count` and
@@ -550,10 +552,24 @@ def list_library_rows(
     section layout, and the bulk tag load.
 
     Spec §9.1; Parsem-3z8 + Parsem-5oi + claude-yda; library-v2
-    extension Parsem-7wu.{1,4}.
+    extension Parsem-7wu.{1,4,5}.
     """
-    where_clause = _SEGMENT_WHERE.get(segment, _SEGMENT_WHERE[DEFAULT_SEGMENT])
     order_clause = _SORT_ORDER.get(sort, _SORT_ORDER[DEFAULT_SORT])
+
+    conditions: list[str] = []
+    params: list[object] = []
+    seg_cond = _SEGMENT_COND.get(segment, _SEGMENT_COND[DEFAULT_SEGMENT])
+    if seg_cond:
+        conditions.append(seg_cond)
+    if tags:
+        placeholders = ",".join("?" * len(tags))
+        conditions.append(
+            "EXISTS (SELECT 1 FROM document_tags dt"
+            f" WHERE dt.document_id = d.id AND dt.tag IN ({placeholders}))"
+        )
+        params.extend(tags)
+    where_clause = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
     rows = conn.execute(
         "SELECT d.id, d.title, d.source_type, d.original_path, d.status,"
         " d.failure_reason, d.total_chunks, d.preference_overrides_json,"
@@ -568,7 +584,8 @@ def list_library_rows(
         " FROM documents d"
         " LEFT JOIN reading_state rs ON rs.document_id = d.id"
         f" {where_clause}"
-        f" {order_clause}"
+        f" {order_clause}",
+        params,
     ).fetchall()
 
     doc_ids = [row["id"] for row in rows]
@@ -581,9 +598,7 @@ def list_library_rows(
         high_water = row["high_water_position"] or 0
         last_opened_raw = row["last_opened_at"]
         last_opened = (
-            datetime.fromisoformat(last_opened_raw)
-            if last_opened_raw is not None
-            else None
+            datetime.fromisoformat(last_opened_raw) if last_opened_raw is not None else None
         )
         section_layout = (
             load_section_layout(conn, doc.id)
@@ -591,36 +606,30 @@ def list_library_rows(
             else []
         )
         silhouette = compute_silhouette_buckets(ratings, high_water)
-        drawer_sections = compute_drawer_sections(
-            section_layout, ratings, high_water
-        )
+        drawer_sections = compute_drawer_sections(section_layout, ratings, high_water)
 
-        result.append(LibraryRow(
-            document=doc,
-            progress_percent=progress_percent(
-                row["total_chunks"], row["current_position"]
-            ),
-            chunk_ratings=ratings,
-            source_domain=derive_source_domain(
-                doc.source_type, doc.original_path
-            ),
-            ingest_date=doc.created_at,
-            last_opened=last_opened,
-            pin_count=row["pin_count"],
-            total_reading_seconds=float(row["total_reading_seconds"]),
-            tags=tags_by_doc.get(doc.id, []),
-            section_layout=section_layout,
-            silhouette_buckets=silhouette,
-            current_position=row["current_position"] or 0,
-            high_water_position=high_water,
-            drawer_sections=drawer_sections,
-        ))
+        result.append(
+            LibraryRow(
+                document=doc,
+                progress_percent=progress_percent(row["total_chunks"], row["current_position"]),
+                chunk_ratings=ratings,
+                source_domain=derive_source_domain(doc.source_type, doc.original_path),
+                ingest_date=doc.created_at,
+                last_opened=last_opened,
+                pin_count=row["pin_count"],
+                total_reading_seconds=float(row["total_reading_seconds"]),
+                tags=tags_by_doc.get(doc.id, []),
+                section_layout=section_layout,
+                silhouette_buckets=silhouette,
+                current_position=row["current_position"] or 0,
+                high_water_position=high_water,
+                drawer_sections=drawer_sections,
+            )
+        )
     return result
 
 
-def load_section_layout(
-    conn: sqlite3.Connection, document_id: int
-) -> list[tuple[str, int]]:
+def load_section_layout(conn: sqlite3.Connection, document_id: int) -> list[tuple[str, int]]:
     """Return the doc's sections as `(heading_text, chunk_count)` pairs
     in section order, for the library v2 drawer's full-resolution
     section-aware heatmap.
@@ -676,9 +685,7 @@ def load_chunk_ratings_dense(
     return [by_pos.get(i) for i in range(total_chunks)]
 
 
-def progress_percent_for_document(
-    conn: sqlite3.Connection, document_id: int
-) -> int:
+def progress_percent_for_document(conn: sqlite3.Connection, document_id: int) -> int:
     """Single-doc progress lookup. Used by the rename route, which needs
     to render one row partial without a full library scan."""
     row = conn.execute(
@@ -710,9 +717,7 @@ def rename_document(
     conn.commit()
 
 
-def delete_document_chunks_and_sections(
-    conn: sqlite3.Connection, document_id: int
-) -> None:
+def delete_document_chunks_and_sections(conn: sqlite3.Connection, document_id: int) -> None:
     """Wipe a document's substrate (revisions → pieces, runs, chunks) and
     sections. Used by retry-parse to clear prior partial state before
     re-running the parse pipeline.
@@ -723,9 +728,7 @@ def delete_document_chunks_and_sections(
     documents) so they're wiped explicitly. Stray chunks with NULL
     chunking_run_id (legacy / test fixtures) are also cleared so a
     retry doesn't leave a half-substrate behind."""
-    conn.execute(
-        "DELETE FROM document_revisions WHERE document_id=?", (document_id,)
-    )
+    conn.execute("DELETE FROM document_revisions WHERE document_id=?", (document_id,))
     conn.execute("DELETE FROM chunks WHERE document_id=?", (document_id,))
     conn.execute("DELETE FROM sections WHERE document_id=?", (document_id,))
     conn.commit()
@@ -816,9 +819,7 @@ def insert_chunking_artifacts(
     """
     timestamp = now.isoformat()
     try:
-        ordinal_to_piece_id = insert_atomic_pieces(
-            conn, revision_id=revision_id, pieces=pieces
-        )
+        ordinal_to_piece_id = insert_atomic_pieces(conn, revision_id=revision_id, pieces=pieces)
         run = insert_chunking_run(
             conn,
             revision_id=revision_id,
@@ -863,8 +864,7 @@ def insert_chunking_artifacts(
 
             for ordinal_in_chunk, piece_ordinal in enumerate(record.piece_ordinals):
                 conn.execute(
-                    "INSERT INTO chunk_pieces (chunk_id, piece_id, ordinal)"
-                    " VALUES (?, ?, ?)",
+                    "INSERT INTO chunk_pieces (chunk_id, piece_id, ordinal) VALUES (?, ?, ?)",
                     (chunk_id, ordinal_to_piece_id[piece_ordinal], ordinal_in_chunk),
                 )
 
@@ -914,9 +914,7 @@ def insert_chunking_artifacts(
     return run
 
 
-def load_chunk_records_for_document(
-    conn: sqlite3.Connection, document_id: int
-) -> list[Chunk]:
+def load_chunk_records_for_document(conn: sqlite3.Connection, document_id: int) -> list[Chunk]:
     """Latest-run chunk records for a document. Returns [] when the
     document has no chunking run yet (still processing or failed)."""
     rows = conn.execute(
@@ -969,9 +967,7 @@ def load_chunk_records_for_document(
     ]
 
 
-def load_section_records_for_document(
-    conn: sqlite3.Connection, document_id: int
-) -> list[Section]:
+def load_section_records_for_document(conn: sqlite3.Connection, document_id: int) -> list[Section]:
     """Latest-run sections for a document."""
     rows = conn.execute(
         "SELECT s.start_chunk_position, s.end_chunk_position, s.heading_level,"

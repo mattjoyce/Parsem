@@ -1,6 +1,6 @@
 [project]
 name = "parsem"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Self-hosted local-first deep-reading app for Markdown documents"
 requires-python = ">=3.11"
 dependencies = [
@@ -28,6 +28,12 @@ parsem = "parsem.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+# Single source of truth: the version lives in parsem/__init__.py
+# (parsem.__version__). Bump it there on release, then `git tag v<x.y.z>`
+# to match — the build, the runtime, and the UI footer all read it.
+[tool.hatch.version]
+path = "parsem/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["parsem"]

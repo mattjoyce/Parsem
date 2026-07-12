@@ -11,6 +11,8 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi.templating import Jinja2Templates
 
+from parsem import __version__ as _PARSEM_VERSION
+
 # Threshold for switching between relative and absolute date display
 # in the tile slug. ~30 days matches "is this fresh content or have I
 # sat on it for a while?" — see ADR 0005, Q9.
@@ -88,3 +90,7 @@ def register(templates: Jinja2Templates) -> None:
     """
     templates.env.filters["relative_date"] = relative_date
     templates.env.globals["source_label"] = source_label
+    # App version for the library footer (semver, single source of truth
+    # in parsem/__init__.py). A global so any template can render it
+    # without every route threading it through the context dict.
+    templates.env.globals["parsem_version"] = _PARSEM_VERSION

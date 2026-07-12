@@ -59,9 +59,9 @@
   </dl>
 
   {% if row.tags %}
-  {# Tag chips — display-only in this child. Add/remove ships in
-     Parsem-7wu.5 (tag CRUD endpoints + chip-row filter on the
-     control strip). #}
+  {# Tag chips — display here; assignment happens via the library's
+     select mode → batch Tag/Untag (bd Parsem-7wu.5). Click a chip in
+     the control strip to filter the grid by it. #}
   <div class="library-drawer__tags">
     {% for tag in row.tags %}<span class="library-drawer__chip">{{ tag }}</span>{% endfor %}
   </div>

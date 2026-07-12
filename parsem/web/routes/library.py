@@ -17,9 +17,11 @@ import shutil
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 
 from parsem.ingest import layout
@@ -40,7 +42,14 @@ from parsem.store.documents import (
     progress_percent_for_document,
     rename_document,
 )
-from parsem.store.tags import list_tags_for_doc
+from parsem.store.tags import (
+    add_tag,
+    list_all_tags,
+    list_tags_for_doc,
+    normalise_tag,
+    remove_tag,
+)
+from parsem.web.db_session import DbConn
 from parsem.web.ingest import reparse_document
 from parsem.web.state import empty_reader_state
 
@@ -51,12 +60,56 @@ class RenameBody(BaseModel):
     title: str
 
 
+class BatchBody(BaseModel):
+    """Bulk action over a set of documents (ADR 0005, bd Parsem-7wu.5).
+
+    `action` is the discriminator; `document_ids` is the selected set;
+    `tag` is required for tag/untag and ignored otherwise. One endpoint,
+    action-as-data — keeps the route surface small and the client a
+    single fetch() per bulk action.
+    """
+
+    action: Literal["delete", "rechunk", "tag", "untag"]
+    document_ids: list[int]
+    tag: str | None = None
+
+
+def _strip_href(segment: str, sort: str, tags: list[str]) -> str:
+    """Build a /library URL preserving segment + sort + the given tag
+    set. The template calls this to keep query state stable across
+    segment clicks, the sort dropdown, and the Clear link."""
+    query: list[tuple[str, str]] = [("segment", segment), ("sort", sort)]
+    query.extend(("tag", t) for t in tags)
+    return "/library?" + urlencode(query)
+
+
+def _tag_chips(
+    all_tags: list[str], active: list[str], segment: str, sort: str
+) -> list[dict[str, object]]:
+    """One chip model per known tag: its label, whether it's currently
+    active, and the href that toggles it in/out of the filter (additive
+    OR). Computed here so library.html stays declarative."""
+    active_set = set(active)
+    chips: list[dict[str, object]] = []
+    for tag in all_tags:
+        next_tags = [t for t in active if t != tag] if tag in active_set else [*active, tag]
+        chips.append(
+            {
+                "tag": tag,
+                "active": tag in active_set,
+                "href": _strip_href(segment, sort, next_tags),
+            }
+        )
+    return chips
+
+
 router = APIRouter()
 
 
 @router.get("/library", response_class=HTMLResponse)
 def get_library(
     request: Request,
+    conn: DbConn,
     segment: str = DEFAULT_SEGMENT,
     sort: str = DEFAULT_SORT,
 ) -> HTMLResponse:
@@ -73,7 +126,24 @@ def get_library(
         segment = DEFAULT_SEGMENT
     if sort not in VALID_SORTS:
         sort = DEFAULT_SORT
-    rows = list_library_rows(request.app.state.db, segment=segment, sort=sort)
+
+    all_tags = list_all_tags(conn)
+    known = set(all_tags)
+    # Normalise every ?tag= value, drop unknowns + dupes, keep order.
+    # Unknown/garbage tags are silently discarded so a stale bookmark
+    # or a hand-edited URL degrades to "no tag filter" rather than 422.
+    active_tags: list[str] = []
+    seen: set[str] = set()
+    for raw in request.query_params.getlist("tag"):
+        try:
+            canonical = normalise_tag(raw)
+        except ValueError:
+            continue
+        if canonical in known and canonical not in seen:
+            seen.add(canonical)
+            active_tags.append(canonical)
+
+    rows = list_library_rows(conn, segment=segment, sort=sort, tags=active_tags or None)
     templates = request.app.state.templates
     return templates.TemplateResponse(
         request,
@@ -86,17 +156,22 @@ def get_library(
             "presentation": request.app.state.presentation,
             "current_segment": segment,
             "current_sort": sort,
+            # Tag-chip filter row (bd Parsem-7wu.5).
+            "tag_chips": _tag_chips(all_tags, active_tags, segment, sort),
+            "active_tags": active_tags,
+            "strip_href": _strip_href,
         },
     )
 
 
 @router.post("/documents/{document_id}/delete")
-def post_delete(document_id: int, request: Request) -> RedirectResponse:
+def post_delete(
+    document_id: int, request: Request, conn: DbConn
+) -> RedirectResponse:
     """Hard-delete the document and its dependents (cascade) plus the
     original .md file. 404 if the id is unknown. If the document being
     deleted is the one currently held in `app.state.reader`, swap to
     the empty placeholder so the next reader-open rebuilds from DB."""
-    conn = request.app.state.db
     if not delete_document(conn, document_id):
         raise HTTPException(status_code=404, detail="Document not found")
 
@@ -108,20 +183,22 @@ def post_delete(document_id: int, request: Request) -> RedirectResponse:
     shutil.rmtree(layout.document_dir(originals_dir, document_id), ignore_errors=True)
 
     if request.app.state.reader.document_id == document_id:
-        request.app.state.reader = empty_reader_state(conn)
+        # Bind the fresh reader state to the DURABLE connection, not this
+        # request's connection — the reader's EventLog outlives the
+        # request, and `conn` is closed once we return.
+        request.app.state.reader = empty_reader_state(request.app.state.db)
 
     return RedirectResponse(url="/library", status_code=302)
 
 
 @router.post("/documents/{document_id}/rename", response_class=HTMLResponse)
 def post_rename(
-    document_id: int, request: Request, body: RenameBody
+    document_id: int, request: Request, body: RenameBody, conn: DbConn
 ) -> HTMLResponse:
     """Inline-rename a library row. Returns the updated `<tr>` partial
     so the JS layer can outerHTML-swap a single row instead of
     reloading the page. Validation: trim whitespace, then non-empty
     and ≤200 chars; both reject with 422."""
-    conn = request.app.state.db
     doc = load_document(conn, document_id)
     if doc is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -160,8 +237,7 @@ def post_rename(
         (document_id,),
     ).fetchone()
     total_seconds_row = conn.execute(
-        "SELECT COALESCE(SUM(estimated_read_seconds), 0) AS s"
-        " FROM chunks WHERE document_id = ?",
+        "SELECT COALESCE(SUM(estimated_read_seconds), 0) AS s FROM chunks WHERE document_id = ?",
         (document_id,),
     ).fetchone()
     section_layout = (
@@ -173,9 +249,7 @@ def post_rename(
         document=updated,
         progress_percent=progress,
         chunk_ratings=chunk_ratings,
-        source_domain=derive_source_domain(
-            updated.source_type, updated.original_path
-        ),
+        source_domain=derive_source_domain(updated.source_type, updated.original_path),
         ingest_date=updated.created_at,
         last_opened=last_opened,
         pin_count=pin_count_row["n"] if pin_count_row else 0,
@@ -185,9 +259,7 @@ def post_rename(
         silhouette_buckets=compute_silhouette_buckets(chunk_ratings, high_water),
         current_position=current_position,
         high_water_position=high_water,
-        drawer_sections=compute_drawer_sections(
-            section_layout, chunk_ratings, high_water
-        ),
+        drawer_sections=compute_drawer_sections(section_layout, chunk_ratings, high_water),
     )
     templates = request.app.state.templates
     return templates.TemplateResponse(
@@ -201,13 +273,14 @@ def post_rename(
 
 
 @router.post("/documents/{document_id}/retry-parse")
-def post_retry_parse(document_id: int, request: Request) -> RedirectResponse:
+def post_retry_parse(
+    document_id: int, request: Request, conn: DbConn
+) -> RedirectResponse:
     """Re-run the parse/chunk pipeline on a document's stored markdown.
     Backs the library "Retry" button (failed docs) and the "Re-chunk"
     button (ready docs); the work — wipe, re-parse, re-anchor the
     reading position — lives in `parsem.web.ingest.reparse_document`.
     Spec §17.2; beads Parsem-pnk + claude-m4l."""
-    conn = request.app.state.db
     if load_document(conn, document_id) is None:
         raise HTTPException(status_code=404, detail="Document not found")
     reparse_document(
@@ -217,3 +290,82 @@ def post_retry_parse(document_id: int, request: Request) -> RedirectResponse:
         now=datetime.now(UTC),
     )
     return RedirectResponse(url="/library", status_code=302)
+
+
+@router.post("/documents/batch")
+def post_batch(request: Request, body: BatchBody, conn: DbConn) -> JSONResponse:
+    """Apply one action to a set of selected documents (ADR 0005, bd
+    Parsem-7wu.5). Backs the library's select-mode action bar.
+
+    Actions reuse the same per-doc primitives as the single-doc routes,
+    so behaviour is identical, just fanned over the id set in one
+    request/transaction:
+      - delete   → `delete_document` + unlink the originals dir (skips
+                   unknown ids); resets the reader if it held one.
+      - rechunk  → `reparse_document`, but only for `ready` docs (the
+                   "Re-chunk" affordance); non-ready ids are skipped.
+      - tag/untag→ `add_tag` / `remove_tag` with a required, normalised
+                   tag; idempotent, so re-tagging already-tagged docs is
+                   a no-op that doesn't count as affected.
+
+    Unknown/missing ids are silently skipped rather than 404-ing the
+    whole batch — a half-stale selection still does the right thing for
+    the docs that remain. Returns `{ok, action, affected}` where
+    `affected` is the count of docs actually changed; the client reloads
+    /library to reflect the new state. Runs on a per-request connection —
+    bulk Re-chunk is the heaviest writer, and this endpoint must not race
+    a concurrent ingest on a shared connection.
+    """
+    # Dedupe while preserving order — a doubled id must not double-count.
+    ids = list(dict.fromkeys(body.document_ids))
+    if not ids:
+        raise HTTPException(status_code=422, detail="No documents selected.")
+
+    canonical: str | None = None
+    if body.action in ("tag", "untag"):
+        if body.tag is None or not body.tag.strip():
+            raise HTTPException(status_code=422, detail="A tag is required.")
+        try:
+            canonical = normalise_tag(body.tag)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    originals_dir: Path = request.app.state.originals_dir
+    now = datetime.now(UTC)
+    affected = 0
+    for document_id in ids:
+        doc = load_document(conn, document_id)
+        if doc is None:
+            continue
+        if body.action == "delete":
+            if delete_document(conn, document_id):
+                shutil.rmtree(
+                    layout.document_dir(originals_dir, document_id),
+                    ignore_errors=True,
+                )
+                if request.app.state.reader.document_id == document_id:
+                    # Durable connection — the per-request `conn` closes
+                    # when this request ends (see post_delete).
+                    request.app.state.reader = empty_reader_state(
+                        request.app.state.db
+                    )
+                affected += 1
+        elif body.action == "rechunk":
+            if doc.status == "ready":
+                reparse_document(
+                    conn,
+                    document_id=document_id,
+                    originals_dir=originals_dir,
+                    now=now,
+                )
+                affected += 1
+        elif body.action == "tag":
+            assert canonical is not None  # guaranteed by the guard above
+            if add_tag(conn, document_id, canonical, now=now):
+                affected += 1
+        elif body.action == "untag":
+            assert canonical is not None  # guaranteed by the guard above
+            if remove_tag(conn, document_id, canonical):
+                affected += 1
+
+    return JSONResponse({"ok": True, "action": body.action, "affected": affected})
