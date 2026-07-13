@@ -6,7 +6,10 @@
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   {# No-FOUC appearance bootstrap — see reader.html (claude-rdk, §15.3). #}
   {% include "_prefs_bootstrap.html" %}
-  <link rel="stylesheet" href="/static/reader.css">
+  {# Version-stamp static assets so a deploy busts the browser cache —
+     StaticFiles sends no Cache-Control, so without this a changed
+     reader.css/library.js keeps serving stale until a hard reload. #}
+  <link rel="stylesheet" href="/static/reader.css?v={{ parsem_version }}">
 </head>
 <body>
 <main class="library-page">
@@ -142,7 +145,7 @@
 {% endfor %}
 
 {% include "_prefs_panel.html" %}
-<script src="/static/prefs.js" defer></script>
-<script src="/static/library.js" defer></script>
+<script src="/static/prefs.js?v={{ parsem_version }}" defer></script>
+<script src="/static/library.js?v={{ parsem_version }}" defer></script>
 </body>
 </html>

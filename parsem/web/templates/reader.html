@@ -8,8 +8,9 @@
      first paint already carries the reader's theme / density / width /
      size / prose-font (claude-rdk, spec §15.3). #}
   {% include "_prefs_bootstrap.html" %}
-  <link rel="stylesheet" href="/static/reader.css">
-  <link rel="stylesheet" href="/static/reader_pins.css">
+  {# Version-stamped so a deploy busts the cache (see library.html). #}
+  <link rel="stylesheet" href="/static/reader.css?v={{ parsem_version }}">
+  <link rel="stylesheet" href="/static/reader_pins.css?v={{ parsem_version }}">
 </head>
 <body data-document-id="{{ document_id }}">
 {% include "_reader_main.html" %}
@@ -19,10 +20,10 @@
 {% include "_note_panel.html" %}
 {# prefs.js first — its capture-phase keydown listener owns ',' / Esc.
    shortcuts.js owns '?' / Esc in the same capture phase. #}
-<script src="/static/prefs.js" defer></script>
-<script src="/static/shortcuts.js" defer></script>
-<script src="/static/reader_pins.js" defer></script>
-<script src="/static/reader.js" defer></script>
-<script src="/static/reader_lifecycle.js" defer></script>
+<script src="/static/prefs.js?v={{ parsem_version }}" defer></script>
+<script src="/static/shortcuts.js?v={{ parsem_version }}" defer></script>
+<script src="/static/reader_pins.js?v={{ parsem_version }}" defer></script>
+<script src="/static/reader.js?v={{ parsem_version }}" defer></script>
+<script src="/static/reader_lifecycle.js?v={{ parsem_version }}" defer></script>
 </body>
 </html>
