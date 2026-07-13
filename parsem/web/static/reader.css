@@ -1316,9 +1316,14 @@ body {
   height: 1.15rem;
   margin: 0;
   accent-color: var(--accent);
-  cursor: pointer;
   display: none;
   z-index: 2;
+  /* Pure visual indicator: the whole tile is the click target in select
+   * mode, so the checkbox must NOT intercept clicks. Otherwise a click
+   * on it triggers the native checkbox toggle AND toggleTile(), which
+   * cancel out — clicking the checkbox becomes a silent no-op. Clicks
+   * fall through to the tile; JS drives `checked`. */
+  pointer-events: none;
 }
 body.library--selecting .library-tile__checkbox { display: block; }
 .library-tile.is-selected {
